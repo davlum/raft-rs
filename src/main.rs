@@ -163,9 +163,9 @@ impl<'t> Node<'t, Follower> {
 
   fn handle_request_vote(&mut self, rv: RequestVote, sender: &mpsc::Sender<IPC>) -> Result<(), SendError<IPC>> {
     if self.voted {
-      // I don't get how this conditional results in a `receiving on a closed channel`
-      // sender.send(IPC::NoReply)
-      return Ok(())
+      // But this works
+      sender.send(IPC::NoReply)
+      // return Ok(())
     } else {
       self.voted = true;
       sender.send(IPC::RPC(RV(rv)))
