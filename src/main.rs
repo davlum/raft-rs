@@ -4,7 +4,6 @@ extern crate leveldb;
 extern crate rand;
 extern crate serde;
 extern crate serde_json;
-extern crate session_types;
 
 use std::io::prelude::*;
 use std::{str, io};
@@ -13,7 +12,6 @@ use std::time::{Duration, SystemTime, SystemTimeError};
 
 use core::fmt;
 
-use session_types::*;
 use rand::Rng;
 use serde::{Serialize, Deserialize};
 use std::net::{TcpListener, TcpStream};
@@ -34,7 +32,7 @@ struct RaftConfig<'a> {
   heartbeat_timeout_ms: u64
 }
 
-const RAFT_CONFIG: RaftConfig = RaftConfig{
+const RAFT_CONFIG: &'static RaftConfig = &RaftConfig{
   host: "127.0.0.1:3333",
   db_path: "asdf",
   hosts: vec![],
@@ -91,12 +89,12 @@ enum AppendedLogEntry {
   Failed
 }
 
-struct LogEntry<T> {
+struct LogEntry<T: Send> {
   command: T,
   term: Term
 }
 
-struct PersistentState<T> {
+struct PersistentState<T: Send> {
   current_term: Term,
   voted_for: Option<NodeId>,
   log: Vec<LogEntry<T>>,
@@ -110,7 +108,7 @@ struct VolatileState {
   last_applied: usize,
 }
 
-struct Node<State, T> {
+struct Node<State, T: Send> {
   _state: PhantomData<State>,
   persistent: PersistentState<T>,
   volatile: VolatileState
@@ -157,16 +155,6 @@ enum RPCReq {
   RV(RequestVoteReq)
 }
 
-type RecvRequestVote = Recv<RequestVoteReq, Send<RequestVoteResp, Eps>>;
-
-type RecvAppendEntry = Recv<AppendEntryReq, Send<AppendEntryResp, Eps>>;
-
-type FollowerProtocol = Offer<RecvRequestVote, RecvAppendEntry>;
-
-type TcpProtocol = <FollowerProtocol as HasDual>::Dual;
-
-type CandidateProtocol = <RecvRequestVote as HasDual>::Dual;
-
 fn more_up_to_date_log(left_term: Term, left_index: usize, right_term: Term, right_index: usize) -> bool {
   if left_term > right_term { return true; }
 
@@ -179,18 +167,25 @@ fn get_timeout_millis() -> u128 {
   rand::thread_rng().gen_range(10000..20000)
 }
 
-impl<T> Node<Follower, T> {
+impl<T: Send> Node<Follower, T> {
 
-  fn srv(&mut self, c: Chan<(), FollowerProtocol>) -> FollowerTransitions {
-    match c.offer() {
-      Branch::Left(req_chan) => self.srv_request_vote(req_chan),
-      Branch::Right(append_chan) => self.srv_append_entry(append_chan)
-    };
-    FollowerTransitions::StayFollower
+  fn srv(&mut self, rpc: RPCReq, mut stream: TcpStream) -> io::Result<()> {
+    let str = match rpc {
+      RPCReq::RV(rv) => {
+        let rv_resp = self.srv_request_vote(&rv);
+        serde_json::to_string(&rv_resp)
+      },
+      RPCReq::AE(ae) => {
+        let ae_resp = self.srv_append_entry(&ae);
+        serde_json::to_string(&ae_resp)
+      }
+    }?;
+    stream.write(str.as_bytes())?;
+    stream.flush()?;
+    Ok(())
   }
 
-  fn srv_request_vote(&mut self, c: Chan<(), RecvRequestVote>) {
-    let (c, req_vote_req) = c.recv();
+  fn srv_request_vote(&mut self, req_vote_req: &RequestVoteReq) -> RequestVoteResp {
     if req_vote_req.term < self.persistent.current_term ||
         (self.persistent.voted_for.is_some() &&
          self.persistent.voted_for != Some(req_vote_req.node_id.clone())) ||
@@ -201,27 +196,25 @@ impl<T> Node<Follower, T> {
           req_vote_req.last_log_index
         )
     {
-      c.send(RequestVoteResp {
+      RequestVoteResp {
         term: self.persistent.current_term,
         vote_granted: Voted::No
-      }).close();
+      }
     } else {
-
       self.persistent.voted_for = Some(req_vote_req.node_id.clone());
 
-      c.send(RequestVoteResp {
+      RequestVoteResp {
         term: self.persistent.current_term,
         vote_granted: Voted::Yes
-      }).close();
+      }
     }
   }
 
-  fn srv_append_entry(&mut self, c: Chan<(), RecvAppendEntry>) {
-    let (c, append_entry_req) =  c.recv();
-    c.send(AppendEntryResp {
+  fn srv_append_entry(&mut self, append_entry_req: &AppendEntryReq) -> AppendEntryResp {
+    AppendEntryResp {
       term: self.persistent.current_term,
       success: AppendedLogEntry::Succeeded
-    }).close();
+    }
   }
 }
 
@@ -248,42 +241,19 @@ impl<T> Node<Follower, T> {
 //   }
 // }
 
-fn tcp_cli(rpc: RPCReq, mut stream: TcpStream, c: Chan<(), TcpProtocol>) -> Result<(), serde_json::Error> {
-  let str = match rpc {
-    RPCReq::RV(rv) => {
-      let c = c.sel1().send(rv);
-      let (c, rv_resp) = c.recv();
-      c.close();
-      serde_json::to_string(&rv_resp)
-    },
-    RPCReq::AE(ae) => {
-      let c = c.sel2().send(ae);
-      let (c, ae_resp) = c.recv();
-      c.close();
-      serde_json::to_string(&ae_resp)
-    }
-  }?;
-  stream.write(str.as_bytes()).unwrap();
-  stream.flush().unwrap();
-  Ok(())
-}
-
-fn handle_stream(stream: TcpStream, rpc_sender: &mpsc::Sender<RPCReq>) -> Result<(), serde_json::Error> {
+fn handle_stream(follower: Arc<Mutex<Node<Follower, String>>>, stream: TcpStream, timeout_reset_sender: &mpsc::Sender<()>) -> Result<(), serde_json::Error> {
   let mut reader = BufReader::new(&stream);
   let line = &mut String::new();
   while let Err(_) = reader.read_line(line) {
-    // Must timeout after some time being unable to read line
+
   }
   let rpc: RPCReq = serde_json::from_str(line)?;
-  rpc_sender.send(rpc);
+  timeout_reset_sender.send(());
   println!("Parsed rpc and cleared timer");
-  Ok(())
-}
 
-fn handle_rpc() {
-  let (tcp_chan, follower_chan) = session_channel();
-  let _ = thread::spawn(move || follower.lock().unwrap().srv(follower_chan));
-  tcp_cli(rpc, stream, tcp_chan);
+  follower.lock().unwrap().srv(rpc, stream);
+
+  Ok(())
 }
 
 fn run_timer(timer_reset_receiver: mpsc::Receiver<()>, timeout_sender: mpsc::Sender<()>) {
@@ -305,28 +275,32 @@ fn run_timer(timer_reset_receiver: mpsc::Receiver<()>, timeout_sender: mpsc::Sen
           Err(e) => { println!("Error: {:?}", e)}
         }
       },
-      Err(mpsc::TryRecvError::Disconnected) => println!("Timer receiver Disconnected")
+      Err(mpsc::TryRecvError::Disconnected) => println!("Timer reset receiver channel Disconnected")
     }
   }
 }
 
-fn run_listener(host: &str, rpc_sender: mpsc::Sender<RPCReq>) {
+fn run_listener(follower: Arc<Mutex<Node<Follower, String>>>, host: &str, timeout_receiver: mpsc::Receiver<()>, timeout_reset_sender: mpsc::Sender<()>) {
   let listener = TcpListener::bind(host).unwrap();
   listener.set_nonblocking(true).expect("Cannot set non-blocking");
 
   for stream in listener.incoming() {
     // An assumption is made here that an Open TCP stream will send data very shortly afterwards
+    let clone = follower.clone();
+    let timeout_reset_sender = timeout_reset_sender.clone();
     match (&timeout_receiver.try_recv(), stream) {
       (Ok(_), _) => break,
-      (Err(mpsc::TryRecvError::Empty), Ok(s)) => { handle_stream( s, &rpc_sender); },
+      (Err(mpsc::TryRecvError::Empty), Ok(s)) => {
+        thread::spawn(move|| handle_stream(clone,s, &timeout_reset_sender));
+      },
       (Err(mpsc::TryRecvError::Empty), Err(e)) if e.kind() == io::ErrorKind::WouldBlock => continue,
       (broadcast_err, listener_err) => { println!("{:?} {:?}", broadcast_err, listener_err) },
     }
   }
 }
 
-fn run(raft_config: &RaftConfig) -> std::io::Result<()> {
-  let mut follower = Node {
+fn run(raft_config: &'static RaftConfig) -> std::io::Result<()> {
+  let mut follower: Node<Follower, String> = Node {
     _state: PhantomData,
     persistent: PersistentState {
       current_term: Term(1),
@@ -344,15 +318,13 @@ fn run(raft_config: &RaftConfig) -> std::io::Result<()> {
 
 
   let arc_follower = Arc::new(Mutex::new(follower));
-  // let (timer_reset_sender, timer_reset_receiver) = mpsc::channel();
-  // let (timeout_sender, mut timeout_receiver) = mpsc::channel();
-  let (rpc_sender, rpc_receiver) = mpsc::channel();
+  let (timer_reset_sender, timer_reset_receiver) = mpsc::channel();
+  let (timeout_sender, mut timeout_receiver) = mpsc::channel();
 
-  // let timer_handle = thread::spawn(move || run_timer(timer_reset_receiver, timeout_sender));
-  let listener_handle = thread::spawn(move || run_listener(raft_config.host, rpc_sender, timeout_receiver, timer_reset_sender));
+  let timer_handle = thread::spawn(move || run_timer(timer_reset_receiver, timeout_sender));
+  let listener_handle = thread::spawn(move || run_listener(arc_follower, raft_config.host, timeout_receiver, timer_reset_sender));
 
-
-
+  listener_handle.join();
   // Must signal to timer after receiving RPC
   println!("Didn't receive good requests becoming candidate");
   // let follower = arc_follower.lock().unwrap();
@@ -392,5 +364,5 @@ fn run(raft_config: &RaftConfig) -> std::io::Result<()> {
 }
 
 fn main() {
-  run(&RAFT_CONFIG);
+  run(RAFT_CONFIG);
 }
