@@ -22,10 +22,9 @@ fn test_follower_replies_no_on_lower_term() {
     let host = "127.0.0.1:3343";
     let t = thread::spawn(move || run::<String>(RaftConfig::mk_config(host, vec![], Some(1))));
     let req: RPCReq<()> = RPCReq::RV(RequestVoteReq {
-        node_id: NodeId("node1".to_string()),
+        node_id: "node1".to_string(),
         term: Term(0),
-        last_log_index: 0,
-        last_log_term: Term(0),
+        last_log: None,
     });
     let resp = send_rpc(host, req).unwrap();
     let expected = RPCResp::RV(RequestVoteResp {
@@ -41,10 +40,9 @@ fn test_follower_replies_yes_on_equal_term() {
     let host = "127.0.0.1:3344";
     let t = thread::spawn(move || run::<String>(RaftConfig::mk_config(host, vec![], Some(1))));
     let req: RPCReq<()> = RPCReq::RV(RequestVoteReq {
-        node_id: NodeId("node1".to_string()),
+        node_id: "node1".to_string(),
         term: Term(1),
-        last_log_index: 0,
-        last_log_term: Term(0),
+        last_log: None,
     });
     let resp = send_rpc(host, req).unwrap();
     let expected = RPCResp::RV(RequestVoteResp {
@@ -60,10 +58,9 @@ fn test_follower_increments_term() {
     let host = "127.0.0.1:3345";
     let t = thread::spawn(move || run::<String>(RaftConfig::mk_config(host, vec![], Some(1))));
     let req: RPCReq<()> = RPCReq::RV(RequestVoteReq {
-        node_id: NodeId("node1".to_string()),
+        node_id: "node1".to_string(),
         term: Term(2),
-        last_log_index: 0,
-        last_log_term: Term(0),
+        last_log: None,
     });
     let resp = send_rpc(host, req).unwrap();
     let expected = RPCResp::RV(RequestVoteResp {
@@ -80,10 +77,9 @@ fn test_follower_replies_no_to_other_node() {
     let t = thread::spawn(move || run::<String>(RaftConfig::mk_config(host, vec![], Some(1))));
 
     let req: RPCReq<()> = RPCReq::RV(RequestVoteReq {
-        node_id: NodeId("node1".to_string()),
+        node_id: "node1".to_string(),
         term: Term(1),
-        last_log_index: 0,
-        last_log_term: Term(0),
+        last_log: None,
     });
     let resp = send_rpc(host, req).unwrap();
     let expected = RPCResp::RV(RequestVoteResp {
@@ -92,10 +88,9 @@ fn test_follower_replies_no_to_other_node() {
     });
     assert_eq!(resp, expected);
     let req: RPCReq<()> = RPCReq::RV(RequestVoteReq {
-        node_id: NodeId("node2".to_string()),
+        node_id: "node2".to_string(),
         term: Term(2),
-        last_log_index: 0,
-        last_log_term: Term(0),
+        last_log: None,
     });
     let resp = send_rpc(host, req).unwrap();
 
@@ -110,52 +105,21 @@ fn test_follower_replies_no_to_other_node() {
 #[test]
 fn test_candidate_request_votes() {
     let hosts = vec![
-        "127.0.0.1:3333".to_string(),
-        "127.0.0.1:3334".to_string(),
-        "127.0.0.1:3335".to_string()
+        "127.0.0.1:3333".to_owned(),
+        "127.0.0.1:3334".to_owned(),
+        "127.0.0.1:3335".to_owned()
     ];
+    let mut vec = vec![];
     for host in hosts.clone() {
         let hosts = hosts.clone();
-        thread::Builder::new()
-            .name(host.clone())
-            .spawn(move || run::<String>(RaftConfig::mk_config(&host, hosts.clone(), None)));
+        let hs = thread::spawn(move || run::<String>(RaftConfig::mk_config(&host, hosts.clone(), None)));
+        vec.push(hs);
     };
-    thread::sleep(Duration::from_secs(10))
+
+    thread::sleep(Duration::from_secs(10));
+    for h in vec {
+        h.join();
+    }
 }
 
-//
-// #[test]
-// fn test_follower_replies_no_to_different_node_id() {
-//     initialize();
-//     let rv = RPCReq::RV(RequestVoteReq {
-//         node_id: NodeId("node2".to_string()),
-//         term: Term(1),
-//         last_log_index: 0,
-//         last_log_term: Term(0),
-//     });
-//     let req_vote_resp: RPCResp = send_and_receive(rv).unwrap();
-//     match req_vote_resp {
 
-//     }
-// }
-//
-// #[test]
-// fn test_follower_increases_term_on() {
-//     initialize();
-//     let rv = RPCReq::RV(RequestVoteReq {
-//         node_id: NodeId("node2".to_string()),
-//         term: Term(3),
-//         last_log_index: 0,
-//         last_log_term: Term(0),
-//     });
-//     let req_vote_resp: RPCResp = send_and_receive(rv).unwrap();
-//     match req_vote_resp {
-//         RPCResp::AE(ae) => {
-//             panic!("Received wrong response type!");
-//         }
-//         RPCResp::RV(rv) => {
-//             assert_eq!(rv.term, Term(3));
-//             assert_eq!(rv.vote_granted, Voted::No);
-//         }
-//     }
-// }
