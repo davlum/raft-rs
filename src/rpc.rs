@@ -20,7 +20,7 @@ pub(crate) enum AppendedLogEntry {
     Failed,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct LogEntry<T> {
     pub(crate) i: u64,
     cmd: T,
