@@ -98,6 +98,7 @@ pub(crate) struct AppendEntryResp {
     pub(crate) success: AppendedLogEntry,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum AppendResp {
     // Index that it was appended at
     Appended(u64),
@@ -111,7 +112,12 @@ pub(crate) enum RPCReq<T> {
     RV(RequestVoteReq),
 }
 
-pub struct Committed(pub u64);
+
+#[derive(Serialize, Deserialize)]
+pub struct Committed<T>{
+    pub(crate) i: u64,
+    pub cmd: T,
+}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub(crate) enum RPCResp {

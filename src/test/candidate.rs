@@ -127,8 +127,8 @@ mod request_vote_resp {
         );
         debug_assert_eq!(node.state, State::Leader{
             peer_states: vec![
-                PeerState{ host: "2".to_owned(), next_index: 0, match_index:0, entries_len: 0},
-                PeerState{ host: "3".to_owned(), next_index: 0, match_index:0, entries_len: 0},
+                PeerState{ host: "2".to_owned(), next_index: 0, match_index:None, entries_len: 0},
+                PeerState{ host: "3".to_owned(), next_index: 0, match_index:None, entries_len: 0},
             ]
         });
         debug_assert_eq!(res, vec![

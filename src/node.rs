@@ -19,15 +19,13 @@ pub(crate) enum State {
     Candidate { acquired_votes: Vec<String> },
 }
 
-pub(crate) const LEADER: State = State::Leader { peer_states: vec![] };
-
 const CANDIDATE: State = State::Candidate { acquired_votes: vec![] };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PeerState {
     pub(crate) host: String,
     pub(crate) next_index: u64,
-    pub(crate) match_index: u64,
+    pub(crate) match_index: Option<u64>,
     pub(crate) entries_len: usize,
 }
 
@@ -201,7 +199,7 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
         let f = move |h: String| PeerState {
             host: h,
             next_index,
-            match_index: 0,
+            match_index: None,
             entries_len: 0,
         };
         let peer_states = make_remote_vec(&config.host, &config.hosts, Box::new(f));
@@ -284,18 +282,17 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
                         if peer_state.entries_len > 0 {
                             peer_state.next_index += peer_state.entries_len as u64;
                             let next_index = peer_state.next_index;
-                            peer_state.match_index = next_index - 1;
-
-                            let start = self.commit_index.map_or(0, |x| x + 1);
-                            // TODO return errors ye GOB
-                            for entry in self.log.read_from(start).unwrap() {
-                                if entry.term == self.metadata.get_term() {
-                                    let matches = peer_states.clone().iter().fold(1, |acc, peer_state| {
-                                        if peer_state.match_index >= entry.i { acc + 1 } else { acc }
-                                    });
-                                    if matches > config.hosts.len() / 2 {
-                                        self.commit_index = Some(entry.i);
-                                    }
+                            peer_state.match_index = Some(next_index - 1);
+                        }
+                        let start = self.commit_index.map_or(0, |x| x + 1);
+                        // TODO return errors ye GOB
+                        for entry in self.log.read_from(start).unwrap() {
+                            if entry.term == self.metadata.get_term() {
+                                let matches = peer_states.clone().iter().fold(1, |acc, peer_state| {
+                                    if peer_state.match_index >= Some(entry.i) { acc + 1 } else { acc }
+                                });
+                                if matches > config.hosts.len() / 2 {
+                                    self.commit_index = Some(entry.i);
                                 }
                             }
                         }
@@ -315,7 +312,6 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
     pub(crate) fn recv_timeout(&mut self, config: &RaftConfig) -> Msgs<RPCReq<T>> {
         match self.state.clone() {
             State::Leader { peer_states } => {
-                trace!("Sending Append Entry Requests to peers");
                 self.mk_append_entry_reqs(config, peer_states).into_iter()
                     .map(|(s, ae)| (s, RPCReq::AE(ae)))
                     .collect()
@@ -338,9 +334,9 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
     pub(crate) fn recv_append_req(&mut self, config: &RaftConfig, cmd: T) -> (AppendResp, Msgs<RPCReq<T>>) {
         match self.state.clone() {
             State::Leader { peer_states } => {
-                info!("Appending client request to log");
+                info!("Appending client request to log...");
                 let i = self.get_last_log().map_or(0, |(i, _)| i);
-                self.log.append(&LogEntry { i, cmd, term: self.metadata.get_term() });
+                self.log.append(&LogEntry { i, cmd, term: self.metadata.get_term() }).unwrap();
                 let msgs = self.mk_append_entry_reqs(config, peer_states).into_iter()
                     .map(|(s, ae)| (s, RPCReq::AE(ae)))
                     .collect();
@@ -357,7 +353,7 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
                 last_index = self.log.append(entry).unwrap();
                 debug_assert_eq!(last_index, entry.i);
             }
-            self.log.flush();
+            self.log.flush().unwrap();
             Some(last_index)
         } else { self.get_last_log().map(|(i, _)| i) };
 

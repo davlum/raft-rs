@@ -74,7 +74,7 @@ impl<T: Clone> Log<T> for MemLog<T> {
     }
 
     fn drop(&mut self, offset: u64) {
-        self.0.truncate(offset as usize + 1);
+        self.0.truncate(offset as usize);
     }
 
     fn flush(&mut self) -> LogResult<()> {
@@ -160,7 +160,7 @@ impl<T: Serialize + DeserializeOwned> Log<T> for TypedCommitLog<T> {
 
     /// TODO: truncate as implemented in commitlog can't drop the first element. Open a PR
     fn drop(&mut self, offset: u64) {
-        self.log.truncate(offset);
+        self.log.truncate(offset).unwrap();
     }
 
     fn flush(&mut self) -> LogResult<()> {

@@ -1,0 +1,23 @@
+version: '3'
+services:
+  raft1:
+    build: .
+    volumes:
+      - ./data/raft1:/data
+    ports:
+      - "8001:8000"
+    command: ["dist_leveldb", "raft1:3333,raft2:3333,raft3:3333", "raft1:3333"]
+  raft2:
+    build: .
+    volumes:
+      - ./data/raft2:/data
+    ports:
+      - "8002:8000"
+    command: ["dist_leveldb", "raft1:3333,raft2:3333,raft3:3333", "raft2:3333"]
+  raft3:
+    build: .
+    volumes:
+      - ./data/raft3:/data
+    ports:
+      - "8003:8000"
+    command: ["dist_leveldb", "raft1:3333,raft2:3333,raft3:3333", "raft3:3333"]

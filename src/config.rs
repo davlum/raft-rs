@@ -34,6 +34,8 @@ pub struct RaftConfig {
 
 impl RaftConfig {
     pub fn mk_config(host: &str, hosts: Vec<String>) -> RaftConfig {
+        let host = host.to_owned();
+        assert!(hosts.contains(&host));
         RaftConfig {
             data_dir: PathBuf::from("data"),
             host: host.to_owned(),
@@ -46,6 +48,8 @@ impl RaftConfig {
     }
 
     pub fn mk_configf<P: AsRef<Path>>(host: &str, hosts: Vec<String>, data_dir: P) -> RaftConfig {
+        let host = host.to_owned();
+        assert!(hosts.contains(&host));
         RaftConfig {
             data_dir: data_dir.as_ref().to_owned(),
             host: host.to_owned(),
@@ -64,6 +68,9 @@ impl RaftConfig {
             Ok(file) => file,
         };
         let config: JsonRaftConfig = serde_json::from_reader(file)?;
+
+        let host = host.to_owned();
+        assert!(config.hosts.contains(&host));
 
         Ok(RaftConfig {
             data_dir: config.data_dir.unwrap_or(PathBuf::from("data")),

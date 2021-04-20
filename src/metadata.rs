@@ -76,6 +76,7 @@ fn write_to_file<P: AsRef<Path>>(val: &str, path: P) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Plz dear god propagate these errors
 impl MetadataStore for FileMetadata {
     fn new(data_dir: Option<PathBuf>) -> Self {
         let base = data_dir.unwrap_or(PathBuf::from(DEFAULT_DIR));
@@ -114,17 +115,17 @@ impl MetadataStore for FileMetadata {
 
     fn set_term(&mut self, term: Term) {
         self.metadata.current_term = term;
-        write_to_file(&term.0.to_string(), &self.term_path);
+        write_to_file(&term.0.to_string(), &self.term_path).unwrap();
     }
 
     fn inc_term(&mut self) -> Term {
         self.metadata.current_term = Term(self.metadata.current_term.0 + 1);
-        write_to_file(&self.metadata.current_term.0.to_string(), &self.term_path);
+        write_to_file(&self.metadata.current_term.0.to_string(), &self.term_path).unwrap();
         self.metadata.current_term
     }
 
     fn set_voted_for(&mut self, voted_for: Option<String>) {
         self.metadata.voted_for = voted_for.clone();
-        write_to_file(&voted_for.unwrap_or("".to_owned()), &self.voted_for_path);
+        write_to_file(&voted_for.unwrap_or("".to_owned()), &self.voted_for_path).unwrap();
     }
 }

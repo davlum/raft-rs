@@ -24,8 +24,8 @@ mod append_entry_resp {
 
         debug_assert_eq!(node.state, State::Leader{
             peer_states: vec![
-                PeerState{ host: "2".to_owned(), next_index: 3, match_index:0, entries_len: 0},
-                PeerState{ host: "3".to_owned(), next_index: 3, match_index:0, entries_len: 0},
+                PeerState{ host: "2".to_owned(), next_index: 3, match_index: None, entries_len: 0},
+                PeerState{ host: "3".to_owned(), next_index: 3, match_index: None, entries_len: 0},
             ]
         });
     }
@@ -56,8 +56,8 @@ mod append_entry_resp {
         );
         debug_assert_eq!(node.state, State::Leader{
             peer_states: vec![
-                PeerState{ host: "2".to_owned(), next_index: 2, match_index:0, entries_len: 1},
-                PeerState{ host: "3".to_owned(), next_index: 3, match_index:0, entries_len: 0},
+                PeerState{ host: "2".to_owned(), next_index: 2, match_index: None, entries_len: 1},
+                PeerState{ host: "3".to_owned(), next_index: 3, match_index: None, entries_len: 0},
             ]
         });
         debug_assert_eq!(res, vec![
@@ -97,8 +97,8 @@ mod append_entry_resp {
         });
         debug_assert_eq!(node.state, State::Leader{
             peer_states: vec![
-                PeerState{ host: "2".to_owned(), next_index: 1, match_index:0, entries_len: 2},
-                PeerState{ host: "3".to_owned(), next_index: 3, match_index:0, entries_len: 0},
+                PeerState{ host: "2".to_owned(), next_index: 1, match_index:None, entries_len: 2},
+                PeerState{ host: "3".to_owned(), next_index: 3, match_index:None, entries_len: 0},
             ]
         });
         debug_assert_eq!(res, vec![
@@ -119,15 +119,15 @@ mod append_entry_resp {
         for log in &logs {
             node.log.append(log).unwrap();
         }
+        let config = RaftConfig::mk_config("1", hosts);
+        node.become_leader(&config);
         node.metadata.set_term(Term(1));
         node.state = State::Leader{
             peer_states: vec![
-                PeerState{ host: "2".to_owned(), next_index: 2, match_index:0, entries_len: 1},
-                PeerState{ host: "3".to_owned(), next_index: 3, match_index:0, entries_len: 0},
+                PeerState{ host: "2".to_owned(), next_index: 2, match_index:None, entries_len: 1},
+                PeerState{ host: "3".to_owned(), next_index: 3, match_index:None, entries_len: 0},
             ]
         };
-        let config = RaftConfig::mk_config("1", hosts);
-        node.become_leader(&config);
         let res = node.recv_append_entry_resp(
             &config,
             AppendEntryResp {
@@ -138,8 +138,8 @@ mod append_entry_resp {
         );
         debug_assert_eq!(node.state, State::Leader{
             peer_states: vec![
-                PeerState{ host: "2".to_owned(), next_index: 3, match_index:2, entries_len: 0},
-                PeerState{ host: "3".to_owned(), next_index: 3, match_index:0, entries_len: 0},
+                PeerState{ host: "2".to_owned(), next_index: 3, match_index: Some(2), entries_len: 0},
+                PeerState{ host: "3".to_owned(), next_index: 3, match_index: None, entries_len: 0},
             ]
         });
         debug_assert_eq!(res, vec![

@@ -1,11 +1,11 @@
 mod node;
 mod aplog;
 mod metadata;
-mod config;
-mod rpc;
+pub mod config;
+pub mod rpc;
 mod test;
 
-use log::{error, info, trace};
+use log::{error, trace};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use crate::config::RaftConfig;
@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime};
 use std::sync::mpsc::RecvTimeoutError;
 use std::net::{TcpStream, TcpListener};
 use std::io::{LineWriter, Write, BufReader, BufRead};
-use crate::aplog::TypedCommitLog;
+use crate::aplog::{TypedCommitLog, Log};
 use futures::channel::oneshot;
 use rand::Rng;
 
@@ -63,7 +63,10 @@ fn run_tcp_listener<T: DeserializeOwned + Send + 'static>(
     config: RaftConfig,
     rpc_sender: mpsc::Sender<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
 ) {
-    let listener = TcpListener::bind(config.host).unwrap();
+    let split_iter = config.host.split(":");
+    let address = Addr
+    let port = split_iter.last().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:".to_owned() + port).unwrap();
     let timeout = config.heartbeat_interval as u128;
     match config.connection_number {
         None => {
@@ -120,7 +123,7 @@ fn srv<T: Send + DeserializeOwned + 'static + Serialize>(
     config: RaftConfig,
     node: PersistNode<T>,
     rpc_receiver: mpsc::Receiver<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
-    commit_sender: mpsc::Sender<Committed>) {
+    commit_sender: mpsc::Sender<Committed<T>>) {
     loop {
         match rpc_receiver.recv_timeout(get_timeout(&config, node.clone())) {
             Ok((rpc_sender, rpc_req)) => {
@@ -144,11 +147,18 @@ fn srv<T: Send + DeserializeOwned + 'static + Serialize>(
                 break;
             }
         }
-        let node = node.lock().unwrap();
+        let mut node = node.lock().unwrap();
         match (node.last_applied, node.commit_index) {
-            (Some(last_applied), Some(commit_index)) => {
-                for i in last_applied..=commit_index {
-                    commit_sender.send(Committed(i)).unwrap();
+            (last_applied, Some(commit_index)) => {
+                let last_applied = last_applied.unwrap_or(0);
+                for entry in node.log.read_from(last_applied).unwrap() {
+                    if entry.i <= commit_index {
+                        commit_sender.send(Committed {
+                            i: entry.i,
+                            cmd: entry.cmd
+                        }).unwrap();
+                        node.last_applied = Some(entry.i);
+                    } else { break; }
                 }
             }
             (_, _) => ()
@@ -173,7 +183,7 @@ fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftCo
     for (host, rpc) in msgs {
         let t_config = config.clone();
         let t_node = node.clone();
-
+        trace!("Sending append entry requests to peers...");
         let msgs_handle = thread::spawn(move || send_and_receive_rpc(t_config, t_node, host, rpc)).join();
         match msgs_handle {
             Ok(ae_msgs) => {
@@ -200,20 +210,19 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> Client<T> {
         Client { node, config }
     }
 
-    fn append_cmd(&mut self, cmd: T) -> AppendResp {
+    pub fn append_cmd(&mut self, cmd: T) -> AppendResp {
         let unlocked_node = &mut *self.node.lock().unwrap();
         let (resp, msgs) = unlocked_node.recv_append_req(&self.config, cmd);
         let config = self.config.clone();
         let node = self.node.clone();
         if msgs.len() > 0 {
-
             thread::spawn(move || process_msgs(config, node, msgs));
         }
         resp
     }
 }
 
-pub fn run<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig) -> (Client<T>, mpsc::Receiver<Committed>) {
+pub fn run<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig) -> (Client<T>, mpsc::Receiver<Committed<T>>) {
     let (rpc_sender, rpc_receiver) = mpsc::channel();
     let web_config = config.clone();
     thread::spawn(move || run_tcp_listener::<T>(web_config, rpc_sender));
