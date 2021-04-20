@@ -23,7 +23,7 @@ pub(crate) enum AppendedLogEntry {
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct LogEntry<T> {
     pub(crate) i: u64,
-    cmd: T,
+    pub(crate) cmd: T,
     pub(crate) term: Term,
 }
 
@@ -98,10 +98,11 @@ pub(crate) struct AppendEntryResp {
     pub(crate) success: AppendedLogEntry,
 }
 
-pub enum CommitResp {
-    Commited,
+pub enum AppendResp {
+    // Index that it was appended at
+    Appended(u64),
     NotLeader(Option<String>),
-    Error,
+    Error(String),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -110,6 +111,7 @@ pub(crate) enum RPCReq<T> {
     RV(RequestVoteReq),
 }
 
+pub struct Committed(pub u64);
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub(crate) enum RPCResp {
@@ -121,13 +123,9 @@ pub(crate) enum RPCResp {
 pub(crate) enum RpcError {
     StreamError(io::Error),
     DeserializationError(serde_json::Error),
-    TimeoutError,
+    TimeoutError
 }
 
-pub enum Committed<T> {
-    CMD(T),
-    NotLeader(Option<String>),
-}
 
 impl ToString for RpcError {
     fn to_string(&self) -> String {

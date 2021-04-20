@@ -2,10 +2,11 @@ use commitlog::{message::*, *};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt::Debug;
-use crate::rpc::LogEntry;
+use std::marker::PhantomData;
+use std::path::PathBuf;
+use crate::metadata::DEFAULT_DIR;
 
-const METADATA_PATH: &str = "/metadata.json";
-const LOG_PATH: &str = "/log";
+const LOG_PATH: &str = "log";
 
 #[derive(Debug)]
 pub enum LogError {
@@ -21,8 +22,9 @@ pub(crate) type LogResult<T> = Result<T, LogError>;
 pub(crate) struct MemLog<T>(pub(crate) Vec<T>);
 
 pub(crate) trait Log<T> {
-    fn new(path: Option<&str>) -> LogResult<Self> where Self: Sized;
+    fn new(path: Option<PathBuf>) -> LogResult<Self> where Self: Sized;
     fn read_from(&self, offset: u64) -> LogResult<Vec<T>>;
+    fn read_one(&self, offset: u64) -> Option<T>;
     fn read_from_with_prev(&self, offset: u64) -> LogResult<(Option<T>, Vec<T>)>;
     fn last_i(&self) -> Option<u64>;
     fn last(&self) -> Option<T>;
@@ -30,15 +32,20 @@ pub(crate) trait Log<T> {
     /// Truncates a file after the offset supplied. The resulting log will
     /// contain entries up to the offset.
     fn drop(&mut self, offset: u64);
+    fn flush(&mut self) -> LogResult<()>;
 }
 
 impl<T: Clone> Log<T> for MemLog<T> {
-    fn new(_: Option<&str>) -> LogResult<Self> {
+    fn new(_: Option<PathBuf>) -> LogResult<Self> {
         Ok(MemLog(Vec::new()))
     }
 
     fn read_from(&self, offset: u64) -> LogResult<Vec<T>> {
         Ok(self.0[offset as usize..].to_vec())
+    }
+
+    fn read_one(&self, offset: u64) -> Option<T> {
+        self.0.get(offset as usize).cloned()
     }
 
     fn read_from_with_prev(&self, offset: u64) -> LogResult<(Option<T>, Vec<T>)> {
@@ -67,21 +74,36 @@ impl<T: Clone> Log<T> for MemLog<T> {
     }
 
     fn drop(&mut self, offset: u64) {
-        self.0.truncate(offset as usize);
+        self.0.truncate(offset as usize + 1);
+    }
+
+    fn flush(&mut self) -> LogResult<()> {
+        Ok(())
     }
 }
 
-impl<T: Serialize + DeserializeOwned> Log<T> for CommitLog {
-    fn new(path: Option<&str>) -> LogResult<Self> {
-        let opts = match path {
-            None => LogOptions::new("data".to_owned() + LOG_PATH),
-            Some(path) => LogOptions::new(path.to_owned() + LOG_PATH)
-        };
-        CommitLog::new(opts).map_err(|e| LogError::IOError(e.to_string()))
+pub(crate) struct TypedCommitLog<T> {
+    _data: PhantomData<T>,
+    log: CommitLog,
+}
+
+impl<T: Serialize + DeserializeOwned> Log<T> for TypedCommitLog<T> {
+    fn new(path: Option<PathBuf>) -> LogResult<Self> {
+        let mut path_buf = PathBuf::new();
+        let base = path.unwrap_or(PathBuf::from(DEFAULT_DIR));
+        path_buf.push(base);
+        path_buf.push(LOG_PATH);
+        let opts = LogOptions::new(path_buf);
+        CommitLog::new(opts)
+            .map(|log| TypedCommitLog::<T> {
+                _data: Default::default(),
+                log,
+            })
+            .map_err(|e| LogError::IOError(e.to_string()))
     }
 
     fn read_from(&self, offset: u64) -> LogResult<Vec<T>> {
-        let msgs = self.read(offset, ReadLimit::default())
+        let msgs = self.log.read(offset, ReadLimit::default())
             .map_err(|e| LogError::SerdeError(e.to_string()))?;
         msgs.iter().map(|msg| {
             let s = String::from_utf8_lossy(msg.payload());
@@ -90,11 +112,24 @@ impl<T: Serialize + DeserializeOwned> Log<T> for CommitLog {
         }).collect()
     }
 
+    fn read_one(&self, offset: u64) -> Option<T> {
+        if Some(offset) > self.log.last_offset() {
+            return None;
+        } else {
+            let msgs = self.log.read(offset, ReadLimit::default()).ok()?;
+            let entry = msgs.iter().last()?;
+            let s = String::from_utf8_lossy(entry.payload());
+            serde_json::from_str(s.as_ref())
+                .map_err(|e| LogError::SerdeError(e.to_string()))
+                .ok()
+        }
+    }
+
     fn read_from_with_prev(&self, offset: u64) -> LogResult<(Option<T>, Vec<T>)> {
         if offset == 0 {
             return self.read_from(offset).map(|vec| (None, vec));
         }
-        let msgs = self.read(offset, ReadLimit::default())
+        let msgs = self.log.read(offset, ReadLimit::default())
             .map_err(|e| LogError::SerdeError(e.to_string()))?;
         let mut entries = msgs.iter().map(|msg| {
             let s = String::from_utf8_lossy(msg.payload());
@@ -106,33 +141,30 @@ impl<T: Serialize + DeserializeOwned> Log<T> for CommitLog {
     }
 
     fn last_i(&self) -> Option<u64> {
-        self.last_offset()
+        self.log.last_offset()
     }
 
     fn last(&self) -> Option<T> {
-        match self.last_offset() {
+        match self.log.last_offset() {
             None => None,
-            Some(offset) => {
-                let msgs = self.read(offset, ReadLimit::default()).ok()?;
-                let mut entries = msgs.iter().map(|msg| {
-                    let s = String::from_utf8_lossy(msg.payload());
-                    serde_json::from_str(s.as_ref())
-                        .map_err(|e| LogError::SerdeError(e.to_string()))
-                });
-                entries.next().unwrap().ok()
-            }
+            Some(offset) => self.read_one(offset)
         }
     }
 
     fn append(&mut self, val: &T) -> Result<u64, LogError> {
         let str = serde_json::to_string(val)
             .map_err(|e| LogError::SerdeError(e.to_string()))?;
-        self.append_msg(str)
+        self.log.append_msg(str)
             .map_err(|e| LogError::ReadError(e.to_string()))
     }
 
+    /// TODO: truncate as implemented in commitlog can't drop the first element. Open a PR
     fn drop(&mut self, offset: u64) {
-        self.truncate(offset);
+        self.log.truncate(offset);
+    }
+
+    fn flush(&mut self) -> LogResult<()> {
+        self.log.flush().map_err(|e| LogError::IOError(e.to_string()))
     }
 }
 

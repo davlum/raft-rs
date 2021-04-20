@@ -1,314 +1,226 @@
-mod log;
+mod node;
+mod aplog;
 mod metadata;
 mod config;
 mod rpc;
 mod test;
 
-extern crate commitlog;
-extern crate rand;
-extern crate serde;
-extern crate serde_json;
-extern crate futures;
-
-use std::cmp::{Ordering, min};
-use std::str;
-
-
-use metadata::{MetadataStore, Term};
-use rpc::LogEntry;
-use log::Log;
-use crate::rpc::{RequestVoteReq, RequestVoteResp, RPCResp, Voted, AppendEntryReq, AppendEntryResp, AppendedLogEntry};
-use std::marker::PhantomData;
+use log::{error, info, trace};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use crate::config::RaftConfig;
-use crate::State::Follower;
-use std::fmt::Debug;
-use crate::log::LogResult;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use crate::node::{Node, State, Msgs};
+use crate::rpc::{RPCResp, RPCReq, RpcError, AppendResp, LogEntry, AppendEntryReq, Committed};
+use crate::metadata::FileMetadata;
+use std::time::{Duration, SystemTime};
+use std::sync::mpsc::RecvTimeoutError;
+use std::net::{TcpStream, TcpListener};
+use std::io::{LineWriter, Write, BufReader, BufRead};
+use crate::aplog::TypedCommitLog;
+use futures::channel::oneshot;
+use rand::Rng;
 
-const LEADER: State = State::Leader {
-    next_indices: vec![],
-    match_indices: vec![],
-};
-
-const CANDIDATE: State = State::Candidate { acquired_votes: vec![] };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum State {
-    Follower,
-    Leader {
-        next_indices: Vec<(String, u64)>,
-        match_indices: Vec<(String, u64)>,
-    },
-    Candidate {
-        acquired_votes: Vec<String>
-    },
-}
-
-pub(crate) struct Node<E, L, M> {
-    _data: PhantomData<E>,
-    log: L,
-    data_dir: String,
-    metadata: M,
-    state: State,
-    leader_id: Option<String>,
-    commit_index: Option<u64>,
-    last_applied: Option<u64>,
-    last_log: Option<(u64, Term)>,
-}
-
-type Previous = Option<(u64, Term)>;
-
-#[derive(Default)]
-pub(crate) struct Trans<T, RPC> {
-    pub logs: Vec<LogEntry<T>>,
-    pub msgs: Vec<(String, RPC)>,
-}
-
-fn cmp_discrim<T>(t1: &T, t2: &T) -> bool {
-    std::mem::discriminant(t1) == std::mem::discriminant(t2)
-}
-
-impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
-    fn new() -> Self {
-        Node {
-            _data: Default::default(),
-            log: Log::new(None).unwrap(),
-            data_dir: "".to_owned(),
-            metadata: MetadataStore::new(None),
-            state: State::Follower,
-            leader_id: None,
-            commit_index: None,
-            last_applied: None,
-            last_log: None
+fn read_rpc<T: DeserializeOwned>(timeout: u128, stream: &TcpStream) -> Result<T, RpcError> {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    let now = SystemTime::now();
+    while let Err(_) = reader.read_line(&mut line) {
+        if now.elapsed().unwrap().as_millis() > timeout {
+            return Err(RpcError::TimeoutError);
         }
     }
-    // pub fn new(data_dir: &str) -> Self {
-    //     let metadata = MetadataStore::new(Some(data_dir));
-    //     let log = Log::new(Some(data_dir)).expect("Could not open log");
-    //     let maybe_last = log.last::<Entry>();
-    //     match maybe_last {
-    //
-    //     }
-    //     let mut node = Node {
-    //         state: State::Follower,
-    //         data_dir: data_dir.to_owned(),
-    //         leader_id: None,
-    //         metadata,
-    //         commit_index: None,
-    //         last_applied: None,
-    //         log,
-    //         last_log: None,
-    //     };
-    //     match node.last::<Entry>() {
-    //         Ok((i, entry)) => {
-    //             node.last_log = Some((i, entry.term));
-    //             node
-    //         }
-    //         Err(_) => node
-    //     }
-    // }
-    fn recv_request_vote_req(&mut self, config: &RaftConfig, rv: RequestVoteReq) -> Trans<T, RequestVoteResp> {
-        debug_assert!(config.hosts.contains(&rv.node_id));
-        if rv.term > self.metadata.get_term() {
-            self.become_follower(rv.term)
-        }
+    trace!("Received data is {}", &line);
+    serde_json::from_str(&line).map_err(|e| RpcError::DeserializationError(e))
+}
 
-        return if rv.term == self.metadata.get_term() &&
-            !cmp_discrim(&self.state, &CANDIDATE) &&
-            (self.metadata.get_voted_for().is_none() ||
-                self.metadata.get_voted_for() == Some(rv.node_id.clone())) &&
-            !self.is_more_up_to_date(rv.last_log)
-        {
-            self.metadata.set_voted_for(Some(rv.node_id.clone()));
+fn write_line<T: Serialize>(stream: &TcpStream, data: T) -> std::io::Result<()> {
+    let str = serde_json::to_string(&data).unwrap();
+    let mut stream = LineWriter::new(stream);
+    stream.write_all(str.as_bytes())?;
+    stream.write_all(b"\n")
+}
 
-            Trans {
-                logs: vec![],
-                msgs: vec![(rv.node_id, RequestVoteResp {
-                    node_id: config.host.clone(),
-                    term: self.metadata.get_term(),
-                    vote_granted: Voted::Yes,
-                })],
-            }
-        } else {
-            Trans {
-                logs: vec![],
-                msgs: vec![(rv.node_id, RequestVoteResp {
-                    node_id: config.host.clone(),
-                    term: self.metadata.get_term(),
-                    vote_granted: Voted::No,
-                })],
+fn write_string_line(stream: &TcpStream, data: &String) -> std::io::Result<()> {
+    let mut stream = LineWriter::new(stream);
+    stream.write_all(data.as_bytes())?;
+    stream.write_all(b"\n")
+}
+
+fn send_and_receive_rpc<T: Serialize + DeserializeOwned>(config: RaftConfig, node: PersistNode<T>, host: String, rpc: RPCReq<T>) -> Msgs<AppendEntryReq<T>> {
+    let stream = TcpStream::connect(host).unwrap();
+    write_line(&stream, rpc).unwrap();
+    let rpc_resp: RPCResp = read_rpc(config.heartbeat_interval.into(), &stream).unwrap();
+    let node = &mut *node.lock().unwrap();
+    match rpc_resp {
+        RPCResp::AE(ae) => node.recv_append_entry_resp(&config, ae),
+        RPCResp::RV(rv) => node.recv_request_vote_resp(&config, rv)
+    }
+}
+
+fn run_tcp_listener<T: DeserializeOwned + Send + 'static>(
+    config: RaftConfig,
+    rpc_sender: mpsc::Sender<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
+) {
+    let listener = TcpListener::bind(config.host).unwrap();
+    let timeout = config.heartbeat_interval as u128;
+    match config.connection_number {
+        None => {
+            for stream in listener.incoming() {
+                let stream = stream.unwrap();
+                let rpc_sender = rpc_sender.clone();
+                thread::spawn(move || handle_connection(timeout, stream, rpc_sender));
             }
         }
-    }
+        Some(mut conn_num) => {
+            for stream in listener.incoming() {
+                let stream = stream.unwrap();
+                let rpc_sender = rpc_sender.clone();
+                thread::spawn(move || handle_connection(timeout, stream, rpc_sender));
 
-    fn recv_request_vote_resp(&mut self, config: &RaftConfig, rv: RequestVoteResp) -> Trans<T, AppendEntryReq<T>> {
-        debug_assert!(config.hosts.contains(&rv.node_id));
-        if rv.term > self.metadata.get_term() {
-            self.become_follower(rv.term)
-        }
-        let trans = Trans { logs: vec![], msgs: vec![] };
-        match self.state.clone() {
-            State::Candidate { mut acquired_votes } => {
-                match rv.vote_granted {
-                    Voted::Yes => {
-                        if !acquired_votes.contains(&rv.node_id) {
-                            acquired_votes.push(rv.node_id)
-                        }
-                        if acquired_votes.len() > config.hosts.len() / 2 {
-                            let next_indices = self.become_leader(config);
-                            let mut entries = vec![];
-                            for (dest, next_index) in &next_indices {
-                                let ae = self.mk_append_entry_req(config.host.clone(), *next_index);
-                                entries.push((dest.to_owned(), ae))
-                            }
-                            Trans { logs: vec![], msgs: entries }
-                        } else {
-                            trans
-                        }
-                    }
-                    Voted::No => trans
-                }
-
-            },
-            _ => trans
-        }
-    }
-
-    /// 5.4.1
-    /// Raft determines which of two logs is more up-to-date by comparing the index and
-    /// term of the last entries in the logs. If the logs have last entries with different terms,
-    /// then the log with the later term is more up-to-date. If the logs end with the same term,
-    /// then whichever log is longer is more up-to-date
-    fn is_more_up_to_date(&self, cand_log: Previous) -> bool {
-        match (self.last_log, cand_log) {
-            (None, None) => false,
-            (None, _) => false,
-            (_, None) => true,
-            (Some((i, t)), Some((cand_i, cand_t))) => {
-                match t.cmp(&cand_t) {
-                    Ordering::Less => false,
-                    Ordering::Greater => true,
-                    Ordering::Equal => i > cand_i
+                conn_num = conn_num - 1;
+                if conn_num == 0 {
+                    break;
                 }
             }
         }
     }
+}
 
-    fn mk_append_entry_req(&self, host: String, next_index: u64) -> AppendEntryReq<T> {
-        let last_index = self.last_log.map(|(i, _)| i);
-        if last_index >= Some(next_index) {
-            let (prev, rest) = self.log.read_from_with_prev(next_index).unwrap();
-            let prev = prev.map(|entry| (entry.i, entry.term));
-            AppendEntryReq {
-                node_id: host,
-                term: self.metadata.get_term(),
-                prev_log: prev,
-                entries: rest,
-                leader_commit: self.commit_index
+fn handle_connection<T: DeserializeOwned>(timeout: u128, stream: TcpStream, rpc_sender: mpsc::Sender<(oneshot::Sender<RPCResp>, RPCReq<T>)>) {
+    let maybe_rpc_req = read_rpc(timeout, &stream);
+    match maybe_rpc_req {
+        Ok(rpc_req) => {
+            let (sender, receiver) = oneshot::channel::<RPCResp>();
+            rpc_sender.send((sender, rpc_req)).unwrap();
+            futures::executor::block_on(async {
+                match receiver.await {
+                    Ok(rpc) => write_line(&stream, rpc).unwrap(),
+                    Err(e) => write_string_line(&stream, &e.to_string()).unwrap(),
+                }
+            });
+        }
+        Err(e) => write_string_line(&stream, &e.to_string()).unwrap()
+    }
+}
+
+fn get_timeout<T>(config: &RaftConfig, node: PersistNode<T>) -> Duration {
+    match node.lock().unwrap().state {
+        State::Leader { .. } => Duration::from_millis(config.heartbeat_interval),
+        _ => {
+            let range = config.timeout_min_ms..config.timeout_max_ms;
+            let num = rand::thread_rng().gen_range(range);
+            Duration::from_millis(num)
+        }
+    }
+}
+
+fn srv<T: Send + DeserializeOwned + 'static + Serialize>(
+    config: RaftConfig,
+    node: PersistNode<T>,
+    rpc_receiver: mpsc::Receiver<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
+    commit_sender: mpsc::Sender<Committed>) {
+    loop {
+        match rpc_receiver.recv_timeout(get_timeout(&config, node.clone())) {
+            Ok((rpc_sender, rpc_req)) => {
+                let rpc_resp: RPCResp;
+                {
+                    let node = &mut *node.lock().unwrap();
+                    rpc_resp = match rpc_req {
+                        RPCReq::RV(rv) => RPCResp::RV(node.recv_request_vote_req(&config, rv)),
+                        RPCReq::AE(ae) => RPCResp::AE(node.recv_append_entry_req(&config, ae)),
+                    };
+                }
+                rpc_sender.send(rpc_resp).unwrap();
             }
-        } else {
-            AppendEntryReq {
-                node_id: host,
-                term: self.metadata.get_term(),
-                prev_log: None,
-                entries: vec![],
-                leader_commit: self.commit_index
+            Err(RecvTimeoutError::Timeout) => {
+                let config = config.clone();
+                let node = node.clone();
+                thread::spawn(move || run_timeout(config, node));
             }
-        }
-    }
-
-    fn become_follower(&mut self, term: Term) {
-        self.state = State::Follower;
-        self.metadata.set_voted_for(None);
-        self.metadata.set_term(term);
-    }
-
-    fn become_candidate(&mut self, host: String) {
-        self.state = State::Candidate { acquired_votes: vec![host.to_owned()] };
-        self.metadata.set_voted_for(Some(host));
-        self.metadata.inc_term();
-    }
-
-    fn become_leader(&mut self, config: &RaftConfig) -> Vec<(String, u64)> {
-        let next_index = self.log.last_i().map_or(0, |i| i + 1);
-        let next_f = Box::new(move |h: String| (h, next_index));
-        let next_indices = make_remote_vec(&config.host, &config.hosts, next_f);
-        self.state = State::Leader {
-            next_indices: next_indices.clone(),
-            match_indices: make_remote_vec(&config.host, &config.hosts, Box::new(|h| (h, 0))),
-        };
-        self.leader_id = Some(config.host.clone());
-        self.metadata.set_voted_for(None);
-        next_indices
-    }
-
-    fn recv_append_entry_req(&mut self, config: &RaftConfig, ae: AppendEntryReq<T>) -> Trans<T, AppendEntryResp> {
-        if ae.term < self.metadata.get_term() {
-            let resp = self.mk_append_entry_resp(config.host.clone(), AppendedLogEntry::Failed);
-            return Trans {
-                logs: vec![],
-                msgs: vec![(ae.node_id, resp)]
-            }
-        }
-        if ae.term > self.metadata.get_term() {
-            self.become_follower(ae.term);
-        }
-        if ae.term == self.metadata.get_term() && cmp_discrim(&self.state, &CANDIDATE) {
-            // If terms are equal and this we are in election, then receival of AppendEntries
-            // indicates that this node won
-            self.become_follower(ae.term);
-        }
-        self.leader_id = Some(ae.node_id.clone());
-
-        self.verify_entries(&ae.entries);
-
-        if self.last_log != ae.prev_log {
-            // Try to clean up the follower logs here
-
-            let resp = self.mk_append_entry_resp(config.host.clone(), AppendedLogEntry::Failed);
-            return Trans {
-                logs: vec![],
-                msgs: vec![(ae.node_id, resp)]
-            }
-        }
-
-
-        let mut last_index = 0;
-        for entry in &ae.entries {
-            last_index = self.log.append(entry).unwrap();
-        }
-
-        if ae.leader_commit > self.commit_index {
-            self.commit_index = min(ae.leader_commit, Some(last_index))
-        }
-
-        let resp = self.mk_append_entry_resp(config.host.clone(), AppendedLogEntry::Succeeded);
-        return Trans {
-            logs: vec![],
-            msgs: vec![(ae.node_id, resp)]
-        }
-    }
-
-    fn mk_append_entry_resp(&self, host: String, success: AppendedLogEntry) -> AppendEntryResp {
-        AppendEntryResp {
-            node_id: host,
-            term: self.metadata.get_term(),
-            success
-        }
-    }
-
-    fn verify_entries(&mut self, logs: &Vec<LogEntry<T>>) -> LogResult<()> {
-        let first_i = logs[0].i.clone();
-        let host_logs = self.log.read_from(first_i)?;
-        for (host_log, log) in host_logs.into_iter().zip(logs) {
-            if host_log.term != log.term {
-                self.log.drop(host_log.i);
+            Err(RecvTimeoutError::Disconnected) => {
+                error!("{:?}", RecvTimeoutError::Disconnected);
                 break;
             }
         }
-        Ok(())
+        let node = node.lock().unwrap();
+        match (node.last_applied, node.commit_index) {
+            (Some(last_applied), Some(commit_index)) => {
+                for i in last_applied..=commit_index {
+                    commit_sender.send(Committed(i)).unwrap();
+                }
+            }
+            (_, _) => ()
+        }
     }
 }
 
-fn make_remote_vec<B>(host: &str, hosts: &Vec<String>, f: Box<dyn Fn(String) -> B>) -> Vec<B> {
-    hosts.clone().into_iter().filter(|h| h != host).map(f).collect()
+
+type PersistNode<T> = Arc<Mutex<Node<T, TypedCommitLog<LogEntry<T>>, FileMetadata>>>;
+
+fn run_timeout<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig, node: PersistNode<T>) {
+    let msgs: Msgs<RPCReq<T>>;
+    {
+        let unlocked_node = &mut *node.lock().unwrap();
+        msgs = unlocked_node.recv_timeout(&config);
+    }
+    process_msgs(config, node, msgs);
+}
+
+/// Recursively send messages unless the Append Entries are empty
+fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig, node: PersistNode<T>, msgs: Msgs<RPCReq<T>>) {
+    for (host, rpc) in msgs {
+        let t_config = config.clone();
+        let t_node = node.clone();
+
+        let msgs_handle = thread::spawn(move || send_and_receive_rpc(t_config, t_node, host, rpc)).join();
+        match msgs_handle {
+            Ok(ae_msgs) => {
+                let msgs = ae_msgs.into_iter().filter_map(|(host, ae)| {
+                    if ae.entries.len() > 0 {
+                        Some((host, RPCReq::AE(ae)))
+                    } else { None }
+                }).collect();
+                process_msgs(config.clone(), node.clone(), msgs)
+            },
+            Err(e) => error!("{:?}", e)
+        }
+    }
+}
+
+
+pub struct Client<T> {
+    node: PersistNode<T>,
+    config: RaftConfig,
+}
+
+impl<T: Serialize + DeserializeOwned + Send + 'static> Client<T> {
+    fn new(config: RaftConfig, node: PersistNode<T>) -> Self {
+        Client { node, config }
+    }
+
+    fn append_cmd(&mut self, cmd: T) -> AppendResp {
+        let unlocked_node = &mut *self.node.lock().unwrap();
+        let (resp, msgs) = unlocked_node.recv_append_req(&self.config, cmd);
+        let config = self.config.clone();
+        let node = self.node.clone();
+        if msgs.len() > 0 {
+
+            thread::spawn(move || process_msgs(config, node, msgs));
+        }
+        resp
+    }
+}
+
+pub fn run<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig) -> (Client<T>, mpsc::Receiver<Committed>) {
+    let (rpc_sender, rpc_receiver) = mpsc::channel();
+    let web_config = config.clone();
+    thread::spawn(move || run_tcp_listener::<T>(web_config, rpc_sender));
+    let (commit_sender, commit_receiver) = mpsc::channel();
+    let node: Node<T, TypedCommitLog<LogEntry<T>>, FileMetadata> = Node::new_from_file(config.data_dir.clone());
+    let node = Arc::new(Mutex::new(node));
+    let client = Client::new(config.clone(), node.clone());
+    thread::spawn(move || srv(config, node, rpc_receiver, commit_sender));
+    (client, commit_receiver)
 }

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod request_vote_req {
-    use crate::{Node, State};
-    use crate::log::MemLog;
+    use crate::node::{Node, State};
+    use crate::aplog::MemLog;
     use crate::metadata::{Metadata, Term, MetadataStore};
     use crate::config::RaftConfig;
     use crate::rpc::{RequestVoteReq, Voted, RequestVoteResp, LogEntry};
@@ -20,12 +20,11 @@ mod request_vote_req {
                 last_log: None
             }
         );
-        debug_assert_eq!(res.logs, vec![]);
-        debug_assert_eq!(res.msgs, vec![("2".to_owned(), RequestVoteResp{
+        debug_assert_eq!(res, RequestVoteResp{
             node_id: "1".to_owned(),
             term: Term(1),
             vote_granted: Voted::No
-        })])
+        })
     }
 
     #[test]
@@ -43,20 +42,19 @@ mod request_vote_req {
             }
         );
         debug_assert_eq!(node.state, State::Follower);
-        debug_assert_eq!(res.logs, vec![]);
-        debug_assert_eq!(res.msgs, vec![("2".to_owned(), RequestVoteResp{
+        debug_assert_eq!(res, RequestVoteResp{
             node_id: "1".to_owned(),
             term: Term(2),
             vote_granted: Voted::Yes
-        })])
+        })
     }
 
 }
 
 #[cfg(test)]
 mod request_vote_resp {
-    use crate::{Node, State, cmp_discrim, LEADER};
-    use crate::log::MemLog;
+    use crate::node::{Node, State, PeerState};
+    use crate::aplog::MemLog;
     use crate::metadata::{Metadata, Term, MetadataStore};
     use crate::config::RaftConfig;
     use crate::rpc::{RequestVoteResp, Voted, AppendEntryReq, LogEntry};
@@ -75,8 +73,7 @@ mod request_vote_resp {
                 vote_granted: Voted::No
             }
         );
-        debug_assert_eq!(res.logs, vec![]);
-        debug_assert_eq!(res.msgs, vec![]);
+        debug_assert_eq!(res, vec![]);
     }
 
     #[test]
@@ -94,8 +91,7 @@ mod request_vote_resp {
             }
         );
         debug_assert_eq!(node.state, State::Follower);
-        debug_assert_eq!(res.logs, vec![]);
-        debug_assert_eq!(res.msgs, vec![]);
+        debug_assert_eq!(res, vec![]);
     }
 
     #[test]
@@ -112,8 +108,7 @@ mod request_vote_resp {
                 vote_granted: Voted::Yes
             }
         );
-        debug_assert_eq!(res.logs, vec![]);
-        debug_assert_eq!(res.msgs, vec![]);
+        debug_assert_eq!(res, vec![]);
     }
 
     #[test]
@@ -130,9 +125,13 @@ mod request_vote_resp {
                 vote_granted: Voted::Yes
             }
         );
-        debug_assert!(cmp_discrim(&node.state, &LEADER));
-        debug_assert_eq!(res.logs, vec![]);
-        debug_assert_eq!(res.msgs, vec![
+        debug_assert_eq!(node.state, State::Leader{
+            peer_states: vec![
+                PeerState{ host: "2".to_owned(), next_index: 0, match_index:0, entries_len: 0},
+                PeerState{ host: "3".to_owned(), next_index: 0, match_index:0, entries_len: 0},
+            ]
+        });
+        debug_assert_eq!(res, vec![
             ("2".to_owned(), AppendEntryReq { node_id: "1".to_owned(), term: Term(1), prev_log: None, leader_commit: None, entries: vec![] }),
             ("3".to_owned(), AppendEntryReq { node_id: "1".to_owned(), term: Term(1), prev_log: None, leader_commit: None, entries: vec![] })
         ]);
