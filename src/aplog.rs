@@ -129,7 +129,7 @@ impl<T: Serialize + DeserializeOwned> Log<T> for TypedCommitLog<T> {
         if offset == 0 {
             return self.read_from(offset).map(|vec| (None, vec));
         }
-        let msgs = self.log.read(offset, ReadLimit::default())
+        let msgs = self.log.read(offset - 1, ReadLimit::default())
             .map_err(|e| LogError::SerdeError(e.to_string()))?;
         let mut entries = msgs.iter().map(|msg| {
             let s = String::from_utf8_lossy(msg.payload());

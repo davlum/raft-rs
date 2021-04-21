@@ -6,10 +6,12 @@ mod integration {
     use std::time::Duration;
     use crate::rpc::AppendResp;
     use rand;
+    use log::info;
     use std::{
         fs,
         path::{Path, PathBuf},
     };
+    use futures::StreamExt;
 
     pub struct TestDir {
         path: PathBuf,
@@ -58,27 +60,30 @@ mod integration {
         };
         thread::sleep(Duration::from_secs(2));
 
-        let mut leader = None;
-        let mut leader_vec = vec![];
-        for (host, mut cli) in cli_vec {
-            match cli.append_cmd("foobar".to_owned()) {
-                AppendResp::Appended(i) => {
-                    leader = Some(host);
-                    debug_assert_eq!(i, 0)
+        for (expected_i, cmd) in vec!["foo", "bar"].iter().enumerate() {
+            let mut leader = None;
+            let mut leader_vec = vec![];
+            for (host, mut cli) in cli_vec.clone() {
+                match cli.append_cmd(cmd.to_string()) {
+                    AppendResp::Appended(i) => {
+                        leader = Some(host);
+                        debug_assert_eq!(i, expected_i as u64)
+                    }
+                    AppendResp::NotLeader(maybe_leader) => {
+                        leader_vec.push(maybe_leader)
+                    }
+                    AppendResp::Error(e) => panic!("{:?}", e)
                 }
-                AppendResp::NotLeader(maybe_leader) => {
-                    leader_vec.push(maybe_leader)
-                }
-                AppendResp::Error(e) => panic!("{:?}", e)
             }
-        }
-        for maybe_leader in leader_vec {
-            debug_assert_eq!(leader, maybe_leader);
-        }
-        for receiver in recv_vec {
-            let resp = receiver.recv().unwrap();
-            debug_assert_eq!(resp.cmd, "foobar");
-            debug_assert_eq!(resp.i, 0);
+
+            for maybe_leader in leader_vec {
+                debug_assert_eq!(leader, maybe_leader);
+            }
+            for receiver in &recv_vec {
+                let resp = receiver.recv().unwrap();
+                debug_assert_eq!(resp.cmd, cmd.to_owned());
+                debug_assert_eq!(resp.i, expected_i as u64);
+            }
         }
     }
 }

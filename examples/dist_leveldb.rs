@@ -1,47 +1,67 @@
-#![feature(proc_macro_hygiene, decl_macro)]
-
-use std::{env, thread};
-use std::str;
+use std::{env, thread, str};
 use std::path::Path;
 use std::sync::{mpsc, Mutex, Arc};
 
 use leveldb::database::Database;
 use leveldb::database::kv::KV;
-use leveldb::database::error::Error;
 use leveldb::options::{Options, WriteOptions, ReadOptions};
 use db_key::from_u8;
 
 use log::{error, trace};
 use serde::{Serialize, Deserialize};
-use rocket::State;
 
 use raftrs::config::RaftConfig;
 use raftrs::rpc::{AppendResp, Committed};
 use raftrs::{run, Client};
+use std::net::{TcpListener, TcpStream};
+use std::io::{BufReader, BufRead, LineWriter, Write};
+use std::num::ParseIntError;
+
 
 const LEVEL_DB_PATH: &str = "data/leveldb";
 
-#[macro_use]
-extern crate rocket;
-
 #[derive(Serialize, Deserialize, Debug)]
 enum Cmd {
-    Get(String),
-    Del(String),
+    Get(i32),
+    Del(i32),
     Put {
-        k: String,
+        k: i32,
         v: String,
     },
 }
 
-fn committed_to_resp(append_resp: AppendResp) -> Result<String, String> {
-    match append_resp {
-        AppendResp::Appended(i) => Ok(format!("Appended at {}", i.to_string())),
-        AppendResp::NotLeader(leader) => match leader {
-            None => Err("This server is not the leader".to_owned()),
-            Some(leader_id) => Err(format!("This server is not the leader, leader is: {}", leader_id))
+
+#[derive(Clone, Debug)]
+struct DeserError(String);
+
+const DESER_MSG: &str = "Could not deserialize CMD";
+
+impl From<ParseIntError> for DeserError {
+    fn from(e: ParseIntError) -> Self {
+        DeserError(e.to_string())
+    }
+}
+
+impl Cmd {
+    fn from_str(s: &str) -> Result<Cmd, DeserError> {
+        let deser_err = DeserError(DESER_MSG.to_owned());
+        let mut ss = s.split_whitespace();
+        match ss.next() {
+            Some("get") => {
+                let k = ss.next().ok_or(deser_err)?;
+                Ok(Cmd::Get(k.parse::<i32>()?))
+            }
+            Some("put") => {
+                let k = ss.next().ok_or(deser_err.clone())?;
+                let v = ss.next().ok_or(deser_err)?;
+                Ok(Cmd::Put{ k: k.parse::<i32>()?, v: v.to_owned()})
+            }
+            Some("del") => {
+                let k = ss.next().ok_or(deser_err)?;
+                Ok(Cmd::Del(k.parse::<i32>()?))
+            }
+            _ => Err(deser_err)
         }
-        AppendResp::Error(e) => Err(format!("Error: {}", e.to_string()))
     }
 }
 
@@ -62,35 +82,66 @@ impl DB {
         DB { raft_client, leveldb }
     }
 
-    fn get(&self, k: i32) -> Result<String, Error> {
+    fn get(&self, k: i32) -> String {
         let opts = ReadOptions::new();
-        let maybe_val = self.leveldb.get(opts, k)?;
-        match maybe_val {
-            None => Err(Error::new("Value does not exist".to_owned())),
-            Some(bytes) => match str::from_utf8(&bytes) {
-                Ok(str) => Ok(str.to_owned()),
-                Err(e) => Err(Error::new(e.to_string()))
+        match self.leveldb.get(opts, k) {
+            Ok(None) => "Error: value does not exist".to_owned(),
+            Ok(Some(bytes)) => match str::from_utf8(&bytes) {
+                Ok(str) => format!("Ok: {}", str.to_owned()),
+                Err(e) => format!("Error: {}", e.to_string())
             }
+            Err(e) => format!("Error: {}", e)
         }
     }
 }
 
-#[get("/<k>")]
-fn get(db: State<Arc<Mutex<DB>>>, k: String) -> Result<String, Error> {
-    let k = from_u8::<i32>(k.as_bytes());
-    db.lock().unwrap().get(k)
+/// This is needed in order to translate the Docker bridge network hostnames
+/// to what is being used in the example
+fn leader_translation(s: Option<String>) -> &'static str {
+    let s = s.unwrap_or("unknown".to_owned());
+    match s.as_str() {
+        "raft1:3333" => "127.0.0.1:8001",
+        "raft2:3333" => "127.0.0.1:8002",
+        "raft3:3333" => "127.0.0.1:8003",
+        _ => "unknown"
+    }
 }
 
-#[put("/<k>/<v>")]
-fn put(db: State<Arc<Mutex<DB>>>, k: String, v: String) -> Result<String, String> {
-    let append_resp = db.lock().unwrap().raft_client.append_cmd(Cmd::Put { k, v });
-    committed_to_resp(append_resp)
+fn handle_client(db: Arc<Mutex<DB>>, stream: TcpStream) -> std::io::Result<()> {
+    let mut reader = BufReader::new(&stream);
+    let mut line = String::new();
+    while let Err(_) = reader.read_line(&mut line) {}
+    let mut db = db.lock().unwrap();
+    let resp = match Cmd::from_str(&line) {
+        Ok(Cmd::Get(k)) => db.get(k),
+        Ok(cmd) => {
+            match db.raft_client.append_cmd(cmd) {
+                AppendResp::Appended(i) => format!("Ok: Appended at {}", i),
+                AppendResp::NotLeader(leader) => format!("Error: Leader is {}", leader_translation(leader)),
+                AppendResp::Error(e) => format!("Error: {}", e)
+            }
+        }
+        Err(e) => format!("Error: {:?}", e)
+    };
+    let mut stream = LineWriter::new(&stream);
+    stream.write_all(resp.as_bytes())?;
+    stream.write_all(b"\n")
 }
 
-#[delete("/<k>")]
-fn delete(db: State<Arc<Mutex<DB>>>, k: String) -> Result<String, String> {
-    let append_resp = db.lock().unwrap().raft_client.append_cmd(Cmd::Del(k));
-    committed_to_resp(append_resp)
+fn apply_committed(receiver: mpsc::Receiver<Committed<Cmd>>, db: Arc<Mutex<DB>>) {
+    while let Ok(commited) = receiver.recv() {
+        match commited.cmd {
+            Cmd::Get(_) => trace!("Get should be handled by webserver"),
+            Cmd::Del(k) => {
+                let opts = WriteOptions::new();
+                db.lock().unwrap().leveldb.delete(opts, k).unwrap()
+            }
+            Cmd::Put { k, v } => {
+                let opts = WriteOptions::new();
+                db.lock().unwrap().leveldb.put(opts, k, v.as_bytes()).unwrap()
+            }
+        }
+    }
 }
 
 fn main() {
@@ -100,36 +151,20 @@ fn main() {
     for h in args[1].split(",") {
         hosts.push(h.to_owned())
     }
-    println!("Hosts are {:?}", hosts);
     let host = &args[2];
     let config = RaftConfig::mk_config(host, hosts);
-    let (cli, receiver) = run::<Cmd>(config);
 
+    let listener = TcpListener::bind("0.0.0.0:8000").unwrap();
+
+    let (cli, receiver) = run::<Cmd>(config);
 
     let leveldb = DB::new(cli);
     let db = Arc::new(Mutex::new(leveldb));
     let commit_db = db.clone();
     thread::spawn(move || apply_committed(receiver, commit_db));
-    rocket::ignite()
-        .manage(db)
-        .mount("/", routes![get, put, delete])
-        .launch();
-}
 
-fn apply_committed(receiver: mpsc::Receiver<Committed<Cmd>>, db: Arc<Mutex<DB>>) {
-    while let Ok(commited) = receiver.recv() {
-        match commited.cmd {
-            Cmd::Get(_) => trace!("Get should be handled by webserver"),
-            Cmd::Del(k) => {
-                let k = from_u8::<i32>(k.as_bytes());
-                let opts = WriteOptions::new();
-                db.lock().unwrap().leveldb.delete(opts, k).unwrap()
-            }
-            Cmd::Put { k, v } => {
-                let k = from_u8::<i32>(k.as_bytes());
-                let opts = WriteOptions::new();
-                db.lock().unwrap().leveldb.put(opts, k, v.as_bytes()).unwrap()
-            }
-        }
+    for stream in listener.incoming() {
+        let db = db.clone();
+        thread::spawn(move || handle_client(db, stream.unwrap()));
     }
 }

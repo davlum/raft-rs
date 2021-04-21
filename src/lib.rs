@@ -5,7 +5,7 @@ pub mod config;
 pub mod rpc;
 mod test;
 
-use log::{error, trace};
+use log::{error, trace, info};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use crate::config::RaftConfig;
@@ -42,20 +42,14 @@ fn write_line<T: Serialize>(stream: &TcpStream, data: T) -> std::io::Result<()> 
     stream.write_all(b"\n")
 }
 
-fn write_string_line(stream: &TcpStream, data: &String) -> std::io::Result<()> {
-    let mut stream = LineWriter::new(stream);
-    stream.write_all(data.as_bytes())?;
-    stream.write_all(b"\n")
-}
-
-fn send_and_receive_rpc<T: Serialize + DeserializeOwned>(config: RaftConfig, node: PersistNode<T>, host: String, rpc: RPCReq<T>) -> Msgs<AppendEntryReq<T>> {
-    let stream = TcpStream::connect(host).unwrap();
-    write_line(&stream, rpc).unwrap();
-    let rpc_resp: RPCResp = read_rpc(config.heartbeat_interval.into(), &stream).unwrap();
+fn send_and_receive_rpc<T: Serialize + DeserializeOwned>(config: RaftConfig, node: PersistNode<T>, host: String, rpc: RPCReq<T>) -> Result<Msgs<AppendEntryReq<T>>, RpcError> {
+    let stream = TcpStream::connect(host)?;
+    write_line(&stream, rpc)?;
+    let rpc_resp: RPCResp = read_rpc(config.heartbeat_interval.into(), &stream)?;
     let node = &mut *node.lock().unwrap();
     match rpc_resp {
-        RPCResp::AE(ae) => node.recv_append_entry_resp(&config, ae),
-        RPCResp::RV(rv) => node.recv_request_vote_resp(&config, rv)
+        RPCResp::AE(ae) => Ok(node.recv_append_entry_resp(&config, ae)),
+        RPCResp::RV(rv) => Ok(node.recv_request_vote_resp(&config, rv))
     }
 }
 
@@ -64,9 +58,10 @@ fn run_tcp_listener<T: DeserializeOwned + Send + 'static>(
     rpc_sender: mpsc::Sender<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
 ) {
     let split_iter = config.host.split(":");
-    let address = Addr
     let port = split_iter.last().unwrap();
-    let listener = TcpListener::bind("127.0.0.1:".to_owned() + port).unwrap();
+    let listen_addr = "0.0.0.0:".to_owned() + port;
+    info!("Listening at {}", listen_addr);
+    let listener = TcpListener::bind(listen_addr).unwrap();
     let timeout = config.heartbeat_interval as u128;
     match config.connection_number {
         None => {
@@ -92,19 +87,18 @@ fn run_tcp_listener<T: DeserializeOwned + Send + 'static>(
 }
 
 fn handle_connection<T: DeserializeOwned>(timeout: u128, stream: TcpStream, rpc_sender: mpsc::Sender<(oneshot::Sender<RPCResp>, RPCReq<T>)>) {
-    let maybe_rpc_req = read_rpc(timeout, &stream);
-    match maybe_rpc_req {
+    match read_rpc(timeout, &stream) {
         Ok(rpc_req) => {
             let (sender, receiver) = oneshot::channel::<RPCResp>();
             rpc_sender.send((sender, rpc_req)).unwrap();
             futures::executor::block_on(async {
                 match receiver.await {
                     Ok(rpc) => write_line(&stream, rpc).unwrap(),
-                    Err(e) => write_string_line(&stream, &e.to_string()).unwrap(),
+                    Err(e) => error!("{:?}", e),
                 }
             });
         }
-        Err(e) => write_string_line(&stream, &e.to_string()).unwrap()
+        Err(e) => error!("{:?}", e)
     }
 }
 
@@ -150,15 +144,18 @@ fn srv<T: Send + DeserializeOwned + 'static + Serialize>(
         let mut node = node.lock().unwrap();
         match (node.last_applied, node.commit_index) {
             (last_applied, Some(commit_index)) => {
-                let last_applied = last_applied.unwrap_or(0);
-                for entry in node.log.read_from(last_applied).unwrap() {
-                    if entry.i <= commit_index {
-                        commit_sender.send(Committed {
-                            i: entry.i,
-                            cmd: entry.cmd
-                        }).unwrap();
-                        node.last_applied = Some(entry.i);
-                    } else { break; }
+                if last_applied < Some(commit_index) {
+                    let last_applied = last_applied.map_or(0, |x| x + 1);
+                    for entry in node.log.read_from(last_applied).unwrap() {
+                        if entry.i <= commit_index {
+                            info!("Cmd at index `{}` ready to applied", entry.i);
+                            commit_sender.send(Committed {
+                                i: entry.i,
+                                cmd: entry.cmd
+                            }).unwrap();
+                            node.last_applied = Some(entry.i);
+                        } else { break; }
+                    }
                 }
             }
             (_, _) => ()
@@ -183,10 +180,9 @@ fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftCo
     for (host, rpc) in msgs {
         let t_config = config.clone();
         let t_node = node.clone();
-        trace!("Sending append entry requests to peers...");
         let msgs_handle = thread::spawn(move || send_and_receive_rpc(t_config, t_node, host, rpc)).join();
         match msgs_handle {
-            Ok(ae_msgs) => {
+            Ok(Ok(ae_msgs)) => {
                 let msgs = ae_msgs.into_iter().filter_map(|(host, ae)| {
                     if ae.entries.len() > 0 {
                         Some((host, RPCReq::AE(ae)))
@@ -194,12 +190,13 @@ fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftCo
                 }).collect();
                 process_msgs(config.clone(), node.clone(), msgs)
             },
+            Ok(Err(e)) => error!("{:?}", e),
             Err(e) => error!("{:?}", e)
         }
     }
 }
 
-
+#[derive(Clone)]
 pub struct Client<T> {
     node: PersistNode<T>,
     config: RaftConfig,

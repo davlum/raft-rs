@@ -4,7 +4,7 @@ use std::str;
 use log::{info, trace};
 use crate::metadata::{MetadataStore, Term};
 use crate::rpc::{LogEntry, AppendResp, RPCReq};
-use crate::aplog::Log;
+use crate::aplog::{Log, LogError};
 use crate::rpc::{RequestVoteReq, RequestVoteResp, Voted, AppendEntryReq, AppendEntryResp, AppendedLogEntry};
 use std::marker::PhantomData;
 use crate::config::RaftConfig;
@@ -138,7 +138,7 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
     /// then the log with the later term is more up-to-date. If the logs end with the same term,
     /// then whichever log is longer is more up-to-date
     fn is_more_up_to_date(&self, cand_log: Option<(u64, Term)>) -> bool {
-        let last_log = self.log.last().map(|e| (e.i, e.term));
+        let last_log = self.get_last_log();
         match (last_log, cand_log) {
             (None, None) => false,
             (None, _) => false,
@@ -156,6 +156,7 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
     fn mk_append_entry_req(&self, host: &str, peer_state: &mut PeerState) -> AppendEntryReq<T> {
         let last_log = self.get_last_log();
         let next_index = peer_state.next_index;
+        trace!("Next index for {} is {}", host, next_index);
         if last_log.map(|(i, _)| i) >= Some(next_index) {
             let (prev, rest) = self.log.read_from_with_prev(next_index).unwrap();
             let prev = prev.map(|entry| (entry.i, entry.term));
@@ -181,8 +182,11 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
 
     fn become_follower(&mut self, term: Term) {
         self.state = State::Follower;
-        self.metadata.set_voted_for(None);
-        self.metadata.set_term(term);
+        if term > self.metadata.get_term() {
+            // Must have only one voted for per term.
+            self.metadata.set_voted_for(None);
+            self.metadata.set_term(term);
+        }
         self.leader_id = None;
     }
 
@@ -292,6 +296,7 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
                                     if peer_state.match_index >= Some(entry.i) { acc + 1 } else { acc }
                                 });
                                 if matches > config.hosts.len() / 2 {
+                                    trace!("Commit Index is {}", entry.i);
                                     self.commit_index = Some(entry.i);
                                 }
                             }
@@ -335,12 +340,16 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
         match self.state.clone() {
             State::Leader { peer_states } => {
                 info!("Appending client request to log...");
-                let i = self.get_last_log().map_or(0, |(i, _)| i);
-                self.log.append(&LogEntry { i, cmd, term: self.metadata.get_term() }).unwrap();
-                let msgs = self.mk_append_entry_reqs(config, peer_states).into_iter()
-                    .map(|(s, ae)| (s, RPCReq::AE(ae)))
-                    .collect();
-                (AppendResp::Appended(i), msgs)
+                let i = self.log.last_i().map_or(0, |x| x + 1);
+                match self.log.append(&LogEntry { i, cmd, term: self.metadata.get_term() }) {
+                    Ok(i) => {
+                        let msgs = self.mk_append_entry_reqs(config, peer_states).into_iter()
+                            .map(|(s, ae)| (s, RPCReq::AE(ae)))
+                            .collect();
+                        (AppendResp::Appended(i), msgs)
+                    }
+                    Err(_) => (AppendResp::Error("Error Reading Log".to_owned()), vec![])
+                }
             }
             _ => (AppendResp::NotLeader(self.leader_id.clone()), vec![])
         }

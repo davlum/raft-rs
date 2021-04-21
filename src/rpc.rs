@@ -115,7 +115,7 @@ pub(crate) enum RPCReq<T> {
 
 #[derive(Serialize, Deserialize)]
 pub struct Committed<T>{
-    pub(crate) i: u64,
+    pub i: u64,
     pub cmd: T,
 }
 
@@ -127,7 +127,7 @@ pub(crate) enum RPCResp {
 
 #[derive(Debug)]
 pub(crate) enum RpcError {
-    StreamError(io::Error),
+    IOError(io::Error),
     DeserializationError(serde_json::Error),
     TimeoutError
 }
@@ -136,7 +136,7 @@ pub(crate) enum RpcError {
 impl ToString for RpcError {
     fn to_string(&self) -> String {
         match self {
-            RpcError::StreamError(e) => e.to_string(),
+            RpcError::IOError(e) => e.to_string(),
             RpcError::DeserializationError(e) => e.to_string(),
             RpcError::TimeoutError => "TimeoutError".to_owned()
         }
@@ -145,7 +145,7 @@ impl ToString for RpcError {
 
 impl From<io::Error> for RpcError {
     fn from(e: io::Error) -> Self {
-        RpcError::StreamError(e)
+        RpcError::IOError(e)
     }
 }
 

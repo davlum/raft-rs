@@ -18,5 +18,4 @@ log = "0.4"
 [dev-dependencies]
 leveldb = "0.8"
 env_logger = "0.8"
-rocket = "0.4.7"
 db-key = "0.0.5"

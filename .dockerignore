@@ -3,3 +3,5 @@ data
 target
 .gitignore
 .github
+README.md
+docker-compose.yaml

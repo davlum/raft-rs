@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 const DEFAULT_TIMEOUT_MIN_MS: u64 = 150;
 const DEFAULT_TIMEOUT_MAX_MS: u64 = 300;
 const DEFAULT_HEARTBEAT_INTERVAL: u64 = 50;
+const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0";
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 struct JsonRaftConfig {
@@ -18,6 +19,7 @@ struct JsonRaftConfig {
     // Can have separate timeouts for heartbeats but meh
     timeout_max_ms: Option<u64>,
     heartbeat_interval: Option<u64>,
+    listen_addr: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +28,7 @@ pub struct RaftConfig {
     pub(crate) hosts: Vec<String>,
     pub(crate) data_dir: PathBuf,
     pub(crate) connection_number: Option<u32>,
+    pub(crate) listen_addr: String,
     pub(crate) timeout_min_ms: u64,
     // Can have separate timeouts for heartbeats but meh
     pub(crate) timeout_max_ms: u64,
@@ -41,6 +44,7 @@ impl RaftConfig {
             host: host.to_owned(),
             hosts,
             connection_number: None,
+            listen_addr: DEFAULT_LISTEN_ADDR.to_owned(),
             timeout_min_ms: DEFAULT_TIMEOUT_MIN_MS,
             timeout_max_ms: DEFAULT_TIMEOUT_MAX_MS,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
@@ -55,6 +59,7 @@ impl RaftConfig {
             host: host.to_owned(),
             hosts,
             connection_number: None,
+            listen_addr: DEFAULT_LISTEN_ADDR.to_owned(),
             timeout_min_ms: DEFAULT_TIMEOUT_MIN_MS,
             timeout_max_ms: DEFAULT_TIMEOUT_MAX_MS,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
@@ -76,6 +81,7 @@ impl RaftConfig {
             data_dir: config.data_dir.unwrap_or(PathBuf::from("data")),
             host: host.to_owned(),
             hosts: config.hosts,
+            listen_addr: config.listen_addr.unwrap_or(DEFAULT_LISTEN_ADDR.to_owned()),
             connection_number: config.connection_number,
             timeout_min_ms: config.timeout_min_ms.unwrap_or(DEFAULT_TIMEOUT_MIN_MS),
             timeout_max_ms: config.timeout_max_ms.unwrap_or(DEFAULT_TIMEOUT_MAX_MS),
