@@ -51,10 +51,11 @@ A very simple example of a distributed key-value store - backed by
 [leveldb](https://github.com/google/leveldb) - can be found in the
 [examples](examples/dist_leveldb.rs). It can be run with [Docker][docker].
 The Docker container takes about 3 minutes to build. The client is very 
-rudimentary and should be written using HTTP instead of TCP.
+rudimentary and should be written using HTTP instead of TCP. In this example
+the hosts can be found at localhost:8001, 8002 and 8003.
 
 ```bash
-$ docker compose up  # Or docker compose up -d to stay in the same shell
+$ docker-compose up  # Or docker compose up -d to stay in the same shell
 $ nc 127.0.0.1 8001  # In another shell, or the same one if ran with -d
 put 1 bar
 Ok: Appended at 0
@@ -74,5 +75,10 @@ $ nc 127.0.0.1 8003
 put 1 bar
 Error: Leader is 127.0.0.1:8001
 ```
+
+To simulate network partitioning/node failure we can use the following commands:
+* `docker-compose restart raft1  #  or raft2 or raft3`
+* `docker-compose stop raft1`
+* `docker-compose start raft1`
 
 [docker]: <https://www.docker.com/>

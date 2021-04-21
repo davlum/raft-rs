@@ -2,6 +2,7 @@ version: '3'
 services:
   raft1:
     build: .
+    restart: always
     volumes:
       - ./data/raft1:/data
     ports:
@@ -9,6 +10,7 @@ services:
     command: ["dist_leveldb", "raft1:3333,raft2:3333,raft3:3333", "raft1:3333"]
   raft2:
     build: .
+    restart: always
     volumes:
       - ./data/raft2:/data
     ports:
@@ -16,6 +18,7 @@ services:
     command: ["dist_leveldb", "raft1:3333,raft2:3333,raft3:3333", "raft2:3333"]
   raft3:
     build: .
+    restart: always
     volumes:
       - ./data/raft3:/data
     ports:
