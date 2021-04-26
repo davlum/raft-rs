@@ -152,7 +152,7 @@ fn main() {
         hosts.push(h.to_owned())
     }
     let host = &args[2];
-    let config = RaftConfig::mk_config(host, hosts);
+    let config = RaftConfig::new(host, hosts);
 
     let listener = TcpListener::bind("0.0.0.0:8000").unwrap();
 

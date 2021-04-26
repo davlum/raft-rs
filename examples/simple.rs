@@ -17,7 +17,7 @@ fn main() {
         "127.0.0.1:3334".to_owned(),
         "127.0.0.1:3335".to_owned(),
     ];
-    let config = RaftConfig::mk_config(this_host, hosts);
+    let config = RaftConfig::new(this_host, hosts);
     let (mut client, receiver) = run::<YourType>(config);
 
     let data = YourType { foo: "bar".to_owned() };

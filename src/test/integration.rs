@@ -54,7 +54,7 @@ mod integration {
         for host in hosts.clone() {
             let dir = TestDir::new();
             let hosts = hosts.clone();
-            let (cli, receiver) = run::<String>(RaftConfig::mk_configf(&host, hosts.clone(), dir));
+            let (cli, receiver) = run::<String>(RaftConfig::new_with_dir(&host, hosts.clone(), dir));
             cli_vec.push((host, cli));
             recv_vec.push(receiver);
         };

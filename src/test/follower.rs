@@ -12,7 +12,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.metadata.set_term(Term(1));
-        let config = RaftConfig::mk_config("1",hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -33,7 +33,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.metadata.set_term(Term(2));
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -53,7 +53,7 @@ mod request_vote_req {
     fn test_increments_term_on_higher_term() {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -75,7 +75,7 @@ mod request_vote_req {
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.metadata.set_voted_for(Some("3".to_owned()));
         node.metadata.set_term(Term(1));
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -97,7 +97,7 @@ mod request_vote_req {
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.metadata.set_voted_for(Some("3".to_owned()));
         node.metadata.set_term(Term(1));
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -118,7 +118,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.log.append(&LogEntry{ i: 2, cmd: (), term: Term(1) });
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -139,7 +139,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.log.append(&LogEntry{ i: 1, cmd: (), term: Term(2) });
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -160,7 +160,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.log.append(&LogEntry{ i: 1, cmd: (), term: Term(1) });
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -181,7 +181,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.log.append(&LogEntry{ i: 2, cmd: (), term: Term(1) });
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -202,7 +202,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.log.append(&LogEntry{ i: 2, cmd: (), term: Term(1) });
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -223,7 +223,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.log.append(&LogEntry{ i: 2, cmd: (), term: Term(1) });
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -252,7 +252,7 @@ mod request_vote_resp {
     fn test_doesnt_reply() {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_resp(
             &config,
             RequestVoteResp {
@@ -278,7 +278,7 @@ mod append_entry_req {
     fn test_replies_success_on_empty_entries() {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {
@@ -307,7 +307,7 @@ mod append_entry_req {
             LogEntry { i: 2, cmd: (), term: Term(1) },
         ];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {
@@ -339,7 +339,7 @@ mod append_entry_req {
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         let log = LogEntry { i: 0, cmd: (), term: Term(1) };
         node.log.append(&log);
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {
@@ -374,7 +374,7 @@ mod append_entry_req {
         let log2 = LogEntry { i: 1, cmd: (), term: Term(2) };
         node.log.append(&log1);
         node.log.append(&log2);
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {
@@ -410,7 +410,7 @@ mod append_entry_req {
         node.log.append(&log1);
         let log2 = LogEntry { i: 1, cmd: (), term: Term(2) };
         node.log.append(&log2);
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {
@@ -442,7 +442,7 @@ mod append_entry_req {
         node.log.append(&log1);
         let log2 = LogEntry { i: 1, cmd: (), term: Term(2) };
         node.log.append(&log2);
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {
@@ -473,7 +473,7 @@ mod append_entry_req {
         for log in &logs {
             node.log.append(log).unwrap();
         }
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {
@@ -504,7 +504,7 @@ mod append_entry_req {
         for log in &logs {
             node.log.append(log).unwrap();
         }
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_append_entry_req(
             &config,
             AppendEntryReq {

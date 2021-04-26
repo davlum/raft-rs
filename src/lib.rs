@@ -42,7 +42,7 @@ fn write_line<T: Serialize>(stream: &TcpStream, data: T) -> std::io::Result<()> 
     stream.write_all(b"\n")
 }
 
-fn send_and_receive_rpc<T: Serialize + DeserializeOwned>(config: RaftConfig, node: PersistNode<T>, host: String, rpc: RPCReq<T>) -> Result<Msgs<AppendEntryReq<T>>, RpcError> {
+fn send_and_receive_rpc<T: Serialize + DeserializeOwned>(config: Arc<RaftConfig>, node: PersistNode<T>, host: String, rpc: RPCReq<T>) -> Result<Msgs<AppendEntryReq<T>>, RpcError> {
     let stream = TcpStream::connect(host)?;
     write_line(&stream, rpc)?;
     let rpc_resp: RPCResp = read_rpc(config.heartbeat_interval.into(), &stream)?;
@@ -166,7 +166,7 @@ fn srv<T: Send + DeserializeOwned + 'static + Serialize>(
 
 type PersistNode<T> = Arc<Mutex<Node<T, TypedCommitLog<LogEntry<T>>, FileMetadata>>>;
 
-fn run_timeout<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig, node: PersistNode<T>) {
+fn run_timeout<T: Serialize + DeserializeOwned + Send + 'static>(config: Arc<RaftConfig>, node: PersistNode<T>) {
     let msgs: Msgs<RPCReq<T>>;
     {
         let unlocked_node = &mut *node.lock().unwrap();
@@ -176,7 +176,7 @@ fn run_timeout<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftCon
 }
 
 /// Recursively send messages unless the Append Entries are empty
-fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig, node: PersistNode<T>, msgs: Msgs<RPCReq<T>>) {
+fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: Arc<RaftConfig>, node: PersistNode<T>, msgs: Msgs<RPCReq<T>>) {
     for (host, rpc) in msgs {
         let t_config = config.clone();
         let t_node = node.clone();
@@ -199,11 +199,16 @@ fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftCo
 #[derive(Clone)]
 pub struct Client<T> {
     node: PersistNode<T>,
+    config: Arc<RaftConfig>,
+}
+
+struct Raft<T> {
+    node: PersistNode<T>,
     config: RaftConfig,
 }
 
 impl<T: Serialize + DeserializeOwned + Send + 'static> Client<T> {
-    fn new(config: RaftConfig, node: PersistNode<T>) -> Self {
+    fn new(config: Arc<RaftConfig>, node: PersistNode<T>) -> Self {
         Client { node, config }
     }
 
