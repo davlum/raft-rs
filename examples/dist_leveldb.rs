@@ -5,9 +5,8 @@ use std::sync::{mpsc, Mutex, Arc};
 use leveldb::database::Database;
 use leveldb::database::kv::KV;
 use leveldb::options::{Options, WriteOptions, ReadOptions};
-use db_key::from_u8;
 
-use log::{error, trace};
+use log::trace;
 use serde::{Serialize, Deserialize};
 
 use raftrs::config::RaftConfig;

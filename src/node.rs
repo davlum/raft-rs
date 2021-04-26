@@ -4,7 +4,7 @@ use std::str;
 use log::{info, trace};
 use crate::metadata::{MetadataStore, Term};
 use crate::rpc::{LogEntry, AppendResp, RPCReq};
-use crate::aplog::{Log, LogError};
+use crate::aplog::Log;
 use crate::rpc::{RequestVoteReq, RequestVoteResp, Voted, AppendEntryReq, AppendEntryResp, AppendedLogEntry};
 use std::marker::PhantomData;
 use crate::config::RaftConfig;

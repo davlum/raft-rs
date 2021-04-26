@@ -1,7 +1,6 @@
 use serde::{Serialize, Deserialize};
 use raftrs::config::RaftConfig;
-use raftrs::rpc::{AppendResp, Committed};
-use raftrs::{run, Client};
+use raftrs::run;
 
 // YourType must implement Serialize and Deserialize
 // in order to be sent over the network

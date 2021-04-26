@@ -6,12 +6,10 @@ mod integration {
     use std::time::Duration;
     use crate::rpc::AppendResp;
     use rand;
-    use log::info;
     use std::{
         fs,
         path::{Path, PathBuf},
     };
-    use futures::StreamExt;
 
     pub struct TestDir {
         path: PathBuf,

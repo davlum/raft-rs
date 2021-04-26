@@ -1,8 +1,6 @@
 extern crate serde;
 extern crate serde_json;
 
-use std::fs::File;
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_TIMEOUT_MIN_MS: u64 = 150;

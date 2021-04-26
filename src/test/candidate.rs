@@ -2,7 +2,7 @@
 mod request_vote_req {
     use crate::node::{Node, State};
     use crate::aplog::MemLog;
-    use crate::metadata::{Metadata, Term, MetadataStore};
+    use crate::metadata::{Metadata, Term};
     use crate::config::RaftConfig;
     use crate::rpc::{RequestVoteReq, Voted, RequestVoteResp, LogEntry};
 
@@ -55,7 +55,7 @@ mod request_vote_req {
 mod request_vote_resp {
     use crate::node::{Node, State, PeerState};
     use crate::aplog::MemLog;
-    use crate::metadata::{Metadata, Term, MetadataStore};
+    use crate::metadata::{Metadata, Term};
     use crate::config::RaftConfig;
     use crate::rpc::{RequestVoteResp, Voted, AppendEntryReq, LogEntry};
 

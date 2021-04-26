@@ -202,11 +202,6 @@ pub struct Client<T> {
     config: Arc<RaftConfig>,
 }
 
-struct Raft<T> {
-    node: PersistNode<T>,
-    config: RaftConfig,
-}
-
 impl<T: Serialize + DeserializeOwned + Send + 'static> Client<T> {
     fn new(config: Arc<RaftConfig>, node: PersistNode<T>) -> Self {
         Client { node, config }
@@ -228,7 +223,6 @@ pub fn run<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig)
     let (rpc_sender, rpc_receiver) = mpsc::channel();
     let config = Arc::new(config);
     let web_config = config.clone();
-
     thread::spawn(move || run_tcp_listener::<T>(web_config, rpc_sender));
     let (commit_sender, commit_receiver) = mpsc::channel();
     let node: Node<T, TypedCommitLog<LogEntry<T>>, FileMetadata> = Node::new_from_file(config.data_dir.clone());
