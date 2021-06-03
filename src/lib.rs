@@ -54,7 +54,7 @@ fn send_and_receive_rpc<T: Serialize + DeserializeOwned>(config: Arc<RaftConfig>
 }
 
 fn run_tcp_listener<T: DeserializeOwned + Send + 'static>(
-    config: Arc<RaftConfig>,
+    config: RaftConfig,
     rpc_sender: mpsc::Sender<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
 ) {
     let split_iter = config.host.split(':');
@@ -114,7 +114,7 @@ fn get_timeout<T>(config: &RaftConfig, node: PersistNode<T>) -> Duration {
 }
 
 fn srv<T: Send + DeserializeOwned + 'static + Serialize>(
-    config: Arc<RaftConfig>,
+    config: RaftConfig,
     node: PersistNode<T>,
     rpc_receiver: mpsc::Receiver<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
     commit_sender: mpsc::Sender<Committed<T>>) {
@@ -134,7 +134,7 @@ fn srv<T: Send + DeserializeOwned + 'static + Serialize>(
             Err(RecvTimeoutError::Timeout) => {
                 let config = config.clone();
                 let node = node.clone();
-                run_timeout(config, node);
+                thread::spawn(move || run_timeout(config, node));
             }
             Err(RecvTimeoutError::Disconnected) => {
                 error!("{:?}", RecvTimeoutError::Disconnected);
@@ -221,7 +221,6 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> Client<T> {
 
 pub fn run<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftConfig) -> (Client<T>, mpsc::Receiver<Committed<T>>) {
     let (rpc_sender, rpc_receiver) = mpsc::channel();
-    let config = Arc::new(config);
     let web_config = config.clone();
     thread::spawn(move || run_tcp_listener::<T>(web_config, rpc_sender));
     let (commit_sender, commit_receiver) = mpsc::channel();
