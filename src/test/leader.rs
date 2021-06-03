@@ -19,7 +19,7 @@ mod append_entry_resp {
         for log in &logs {
             node.log.append(log).unwrap();
         }
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         node.become_leader(&config);
 
         debug_assert_eq!(node.state, State::Leader{
@@ -43,7 +43,7 @@ mod append_entry_resp {
             node.log.append(log).unwrap();
         }
         node.metadata.set_term(Term(1));
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         // The match_index for each node will be 3
         node.become_leader(&config);
         let res = node.recv_append_entry_resp(
@@ -79,7 +79,7 @@ mod append_entry_resp {
             node.log.append(log).unwrap();
         }
         node.metadata.set_term(Term(1));
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         // The match_index for each node will be 3
         node.become_leader(&config);
         let _ = node.recv_append_entry_resp(
@@ -119,7 +119,7 @@ mod append_entry_resp {
         for log in &logs {
             node.log.append(log).unwrap();
         }
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         node.become_leader(&config);
         node.metadata.set_term(Term(1));
         node.state = State::Leader{

@@ -6,12 +6,10 @@ mod integration {
     use std::time::Duration;
     use crate::rpc::AppendResp;
     use rand;
-    use log::info;
     use std::{
         fs,
         path::{Path, PathBuf},
     };
-    use futures::StreamExt;
 
     pub struct TestDir {
         path: PathBuf,
@@ -54,7 +52,7 @@ mod integration {
         for host in hosts.clone() {
             let dir = TestDir::new();
             let hosts = hosts.clone();
-            let (cli, receiver) = run::<String>(RaftConfig::mk_configf(&host, hosts.clone(), dir));
+            let (cli, receiver) = run::<String>(RaftConfig::new_with_dir(&host, hosts.clone(), dir));
             cli_vec.push((host, cli));
             recv_vec.push(receiver);
         };

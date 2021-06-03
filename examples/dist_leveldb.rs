@@ -5,9 +5,8 @@ use std::sync::{mpsc, Mutex, Arc};
 use leveldb::database::Database;
 use leveldb::database::kv::KV;
 use leveldb::options::{Options, WriteOptions, ReadOptions};
-use db_key::from_u8;
 
-use log::{error, trace};
+use log::trace;
 use serde::{Serialize, Deserialize};
 
 use raftrs::config::RaftConfig;
@@ -152,7 +151,7 @@ fn main() {
         hosts.push(h.to_owned())
     }
     let host = &args[2];
-    let config = RaftConfig::mk_config(host, hosts);
+    let config = RaftConfig::new(host, hosts);
 
     let listener = TcpListener::bind("0.0.0.0:8000").unwrap();
 

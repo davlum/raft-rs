@@ -2,7 +2,7 @@
 mod request_vote_req {
     use crate::node::{Node, State};
     use crate::aplog::MemLog;
-    use crate::metadata::{Metadata, Term, MetadataStore};
+    use crate::metadata::{Metadata, Term};
     use crate::config::RaftConfig;
     use crate::rpc::{RequestVoteReq, Voted, RequestVoteResp, LogEntry};
 
@@ -11,7 +11,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.become_candidate("1".to_owned());
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -32,7 +32,7 @@ mod request_vote_req {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.become_candidate("1".to_owned());
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_req(
             &config,
             RequestVoteReq {
@@ -55,7 +55,7 @@ mod request_vote_req {
 mod request_vote_resp {
     use crate::node::{Node, State, PeerState};
     use crate::aplog::MemLog;
-    use crate::metadata::{Metadata, Term, MetadataStore};
+    use crate::metadata::{Metadata, Term};
     use crate::config::RaftConfig;
     use crate::rpc::{RequestVoteResp, Voted, AppendEntryReq, LogEntry};
 
@@ -64,7 +64,7 @@ mod request_vote_resp {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.become_candidate("1".to_owned());
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_resp(
             &config,
             RequestVoteResp {
@@ -81,7 +81,7 @@ mod request_vote_resp {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.become_candidate("1".to_owned());
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_resp(
             &config,
             RequestVoteResp {
@@ -99,7 +99,7 @@ mod request_vote_resp {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.become_candidate("1".to_owned());
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_resp(
             &config,
             RequestVoteResp {
@@ -116,7 +116,7 @@ mod request_vote_resp {
         let hosts = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
         let mut node: Node<(), MemLog<LogEntry<()>>, Metadata> = Node::new();
         node.become_candidate("1".to_owned());
-        let config = RaftConfig::mk_config("1", hosts);
+        let config = RaftConfig::new("1", hosts);
         let res = node.recv_request_vote_resp(
             &config,
             RequestVoteResp {

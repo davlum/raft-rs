@@ -345,7 +345,6 @@ name = "raftrs"
 version = "0.1.0"
 dependencies = [
  "commitlog",
- "db-key",
  "env_logger",
  "futures",
  "leveldb",

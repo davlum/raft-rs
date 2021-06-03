@@ -26,13 +26,13 @@ fn read_rpc<T: DeserializeOwned>(timeout: u128, stream: &TcpStream) -> Result<T,
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     let now = SystemTime::now();
-    while let Err(_) = reader.read_line(&mut line) {
+    while reader.read_line(&mut line).is_err() {
         if now.elapsed().unwrap().as_millis() > timeout {
             return Err(RpcError::TimeoutError);
         }
     }
     trace!("Received data is {}", &line);
-    serde_json::from_str(&line).map_err(|e| RpcError::DeserializationError(e))
+    serde_json::from_str(&line).map_err(RpcError::DeserializationError)
 }
 
 fn write_line<T: Serialize>(stream: &TcpStream, data: T) -> std::io::Result<()> {
@@ -57,7 +57,7 @@ fn run_tcp_listener<T: DeserializeOwned + Send + 'static>(
     config: RaftConfig,
     rpc_sender: mpsc::Sender<(oneshot::Sender<RPCResp>, RPCReq<T>)>,
 ) {
-    let split_iter = config.host.split(":");
+    let split_iter = config.host.split(':');
     let port = split_iter.last().unwrap();
     let listen_addr = "0.0.0.0:".to_owned() + port;
     info!("Listening at {}", listen_addr);
@@ -77,7 +77,7 @@ fn run_tcp_listener<T: DeserializeOwned + Send + 'static>(
                 let rpc_sender = rpc_sender.clone();
                 thread::spawn(move || handle_connection(timeout, stream, rpc_sender));
 
-                conn_num = conn_num - 1;
+                conn_num -= 1;
                 if conn_num == 0 {
                     break;
                 }
@@ -184,7 +184,7 @@ fn process_msgs<T: Serialize + DeserializeOwned + Send + 'static>(config: RaftCo
         match msgs_handle {
             Ok(Ok(ae_msgs)) => {
                 let msgs = ae_msgs.into_iter().filter_map(|(host, ae)| {
-                    if ae.entries.len() > 0 {
+                    if !ae.entries.is_empty() {
                         Some((host, RPCReq::AE(ae)))
                     } else { None }
                 }).collect();
@@ -212,7 +212,7 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> Client<T> {
         let (resp, msgs) = unlocked_node.recv_append_req(&self.config, cmd);
         let config = self.config.clone();
         let node = self.node.clone();
-        if msgs.len() > 0 {
+        if !msgs.is_empty() {
             thread::spawn(move || process_msgs(config, node, msgs));
         }
         resp

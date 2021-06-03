@@ -1,7 +1,6 @@
 use serde::{Serialize, Deserialize};
 use raftrs::config::RaftConfig;
-use raftrs::rpc::{AppendResp, Committed};
-use raftrs::{run, Client};
+use raftrs::run;
 
 // YourType must implement Serialize and Deserialize
 // in order to be sent over the network
@@ -17,7 +16,7 @@ fn main() {
         "127.0.0.1:3334".to_owned(),
         "127.0.0.1:3335".to_owned(),
     ];
-    let config = RaftConfig::mk_config(this_host, hosts);
+    let config = RaftConfig::new(this_host, hosts);
     let (mut client, receiver) = run::<YourType>(config);
 
     let data = YourType { foo: "bar".to_owned() };
