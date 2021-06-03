@@ -90,7 +90,7 @@ pub(crate) struct TypedCommitLog<T> {
 impl<T: Serialize + DeserializeOwned> Log<T> for TypedCommitLog<T> {
     fn new(path: Option<PathBuf>) -> LogResult<Self> {
         let mut path_buf = PathBuf::new();
-        let base = path.unwrap_or(PathBuf::from(DEFAULT_DIR));
+        let base = path.unwrap_or_else(|| PathBuf::from(DEFAULT_DIR));
         path_buf.push(base);
         path_buf.push(LOG_PATH);
         let opts = LogOptions::new(path_buf);
@@ -114,7 +114,7 @@ impl<T: Serialize + DeserializeOwned> Log<T> for TypedCommitLog<T> {
 
     fn read_one(&self, offset: u64) -> Option<T> {
         if Some(offset) > self.log.last_offset() {
-            return None;
+            None
         } else {
             let msgs = self.log.read(offset, ReadLimit::default()).ok()?;
             let entry = msgs.iter().last()?;

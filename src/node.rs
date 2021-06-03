@@ -82,7 +82,7 @@ impl<L: Log<LogEntry<T>>, M: MetadataStore, T> Node<T, L, M> {
                 self.metadata.get_voted_for() == Some(rv.node_id.clone())) &&
             !self.is_more_up_to_date(rv.last_log)
         {
-            self.metadata.set_voted_for(Some(rv.node_id.clone()));
+            self.metadata.set_voted_for(Some(rv.node_id));
 
             RequestVoteResp {
                 node_id: config.host.clone(),
@@ -385,7 +385,7 @@ fn make_remote_vec<B>(host: &str, hosts: &Vec<String>, f: Box<dyn Fn(String) -> 
     hosts.clone().into_iter().filter(|h| h != host).map(f).collect()
 }
 
-fn get_index(host: &str, indices: &Vec<PeerState>) -> usize {
+fn get_index(host: &str, indices: &[PeerState]) -> usize {
     // Unwrap, If host isn't in this list we got problems.
     indices.iter().position(|s| s.host == host).unwrap()
 }
